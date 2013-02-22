@@ -20,10 +20,10 @@
  *
  *****************************************************************************/
 
-#define MISSION_NAME		"CHANGEME_MISSION_NAME"
-#define AUTHOR_NAME		"CHANGEME_AUTHOR_NAME"
-#define VERSION_NUMBER		1,0,0,0 // <-- CHANGEME_VERSION_NUMBER
-#define VERSION_STRING		"CHANGEME_VERSION_STRING"
+#define MISSION_NAME		"A Nice Game of Chess"
+#define AUTHOR_NAME		"Kevin Daughtridge"
+#define VERSION_NUMBER		0,9,0,0 //XBETA
+#define VERSION_STRING		"0.9.0 BETA" //XBETA
 
 #include "version.rc"
 
