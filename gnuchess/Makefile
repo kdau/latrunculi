@@ -1,7 +1,7 @@
-# Process this file with automake to produce Makefile.in 
-# Makefile for gnuchess/src/engine.
+# Makefile for the GNU Chess engine, adapted for use in Thief fan missions.
 #
 # Copyright (C) 2001-2011 Free Software Foundation, Inc.
+# Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,28 +16,87 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-noinst_LIBRARIES = libengine.a
+.PHONY: default all clean
+.PRECIOUS: %.o
+default: all
 
-libengine_a_SOURCES = attack.cpp board.cpp book.cpp eval.cpp fen.cpp hash.cpp list.cpp main.cpp material.cpp \
-       move.cpp move_check.cpp move_do.cpp move_evasion.cpp move_gen.cpp move_legal.cpp \
-       option.cpp pawn.cpp piece.cpp posix.cpp protocol.cpp pst.cpp pv.cpp random.cpp recog.cpp \
-       search.cpp search_full.cpp see.cpp sort.cpp square.cpp trans.cpp util.cpp value.cpp \
-       vector.cpp \
-       attack.h board.h book.h colour.h eval.h fen.h hash.h list.h material.h \
-       move.h move_check.h move_do.h move_evasion.h move_gen.h move_legal.h \
-       option.h pawn.h piece.h posix.h protocol.h pst.h pv.h random.h recog.h \
-       search.h search_full.h see.h sort.h square.h trans.h util.h value.h \
-       vector.h
+srcdir = .
+bindir = .
 
-AM_CPPFLAGS = -I$(top_srcdir)/src
+PREFIX = i686-w64-mingw32-
+CXX = $(PREFIX)g++
+AR = $(PREFIX)ar
 
-AM_CXXFLAGS = $(PTHREAD_CXXFLAGS)
+INCLUDES = -I. -I$(srcdir)
+LIBDIRS = -L.
 
-# Flags used to compile Fruit 2.1 - not used by default
-# AM_CXXFLAGS += -fno-exceptions -fno-rtti -O3 -fstrict-aliasing -fomit-frame-pointer
+DEFINES = -D_WIN32 -DWINVER=0x0400 -D_WIN32_WINNT=0x0400 -DWIN32_LEAN_AND_MEAN \
+	-DVERSION=\"6.0.2\"
+DEFINES_D = -DDEBUG
 
-AM_LDFLAGS = $(PTHREAD_LDFLAGS) $(PTHREAD_LIBS)
+CXXFLAGS = -W -Wall -masm=intel -std=gnu++0x -O2
+CXXFLAGS_D = -g -O0
 
-DISTCLEANFILES = *~
+ARFLAGS = rc
 
+LIBRARY = libgnuchess.a
+LIBRARY_D = libgnuchess-d.a
+
+SOURCES = \
+	attack.cpp \
+	board.cpp \
+	book.cpp \
+	eval.cpp \
+	fen.cpp \
+	hash.cpp \
+	list.cpp \
+	main.cpp \
+	material.cpp \
+	move.cpp \
+	move_check.cpp \
+	move_do.cpp \
+	move_evasion.cpp \
+	move_gen.cpp \
+	move_legal.cpp \
+	option.cpp \
+	pawn.cpp \
+	piece.cpp \
+	posix.cpp \
+	protocol.cpp \
+	pst.cpp \
+	pv.cpp \
+	random.cpp \
+	recog.cpp \
+	search.cpp \
+	search_full.cpp \
+	see.cpp \
+	sort.cpp \
+	square.cpp \
+	trans.cpp \
+	util.cpp \
+	value.cpp \
+	vector.cpp
+
+OBJECTS = $(SOURCES:%.cpp=$(bindir)/%.o)
+OBJECTS_D = $(SOURCES:%.cpp=$(bindir)/%-d.o)
+
+$(bindir):
+	mkdir -p $@
+
+$(bindir)/%.o: $(srcdir)/%.cpp
+	$(CXX) $(CXXFLAGS) $(DEFINES) $(INCLUDES) -o $@ -c $<
+
+$(bindir)/%-d.o: $(srcdir)/%.cpp
+	$(CXX) $(CXXFLAGS) $(CXXFLAGS_D) $(DEFINES) $(DEFINES_D) $(INCLUDES) -o $@ -c $<
+
+$(LIBRARY): $(OBJECTS)
+	$(AR) $(ARFLAGS) $@ $?
+
+$(LIBRARY_D): $(OBJECTS_D)
+	$(AR) $(ARFLAGS) $@ $?
+
+all: $(bindir) $(LIBRARY) $(LIBRARY_D)
+
+clean:
+	$(RM) $(bindir)/*.o $(LIBRARY) $(LIBRARY_D)
 

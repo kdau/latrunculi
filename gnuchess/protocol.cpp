@@ -44,7 +44,6 @@
 #include "search.h"
 #include "trans.h"
 #include "util.h"
-#include "config.h"
 
 // constants
 
@@ -71,7 +70,7 @@ extern FILE *pipefd_e2a_1_stream;
 // prototypes
 
 static void init              ();
-static void loop_step         ();
+static bool loop_step         ();
 
 static void parse_go          (char string[]);
 static void parse_position    (char string[]);
@@ -102,7 +101,7 @@ void loop() {
 
    // loop
 
-   while (true) loop_step();
+   while (loop_step());
 }
 
 // init()
@@ -141,13 +140,13 @@ void event() {
 
 // loop_step()
 
-static void loop_step() {
+static bool loop_step() {
 
    char string[65536];
 
    // read a line
 
-   get(string,65536);
+   if (!get(string,65536)) return false;
 
    // parse
 
@@ -207,7 +206,7 @@ static void loop_step() {
       ASSERT(!Searching);
       ASSERT(!Delay);
 
-      exit(EXIT_SUCCESS);
+      return false;
 
    } else if (string_start_with(string,"setoption ")) {
 
@@ -259,6 +258,8 @@ static void loop_step() {
       UseTrans = false;
 
    }
+
+   return true;
 }
 
 // parse_go()
@@ -603,14 +604,12 @@ static void send_best_move() {
 
 // get()
 
-void get(char string[], int size) {
+bool get(char string[], int size) {
 
    ASSERT(string!=NULL);
    ASSERT(size>=65536);
 
-   if (!my_file_read_line(pipefd_a2e_0_stream,string,size)) { // EOF
-      exit(EXIT_SUCCESS);
-   }
+   return my_file_read_line(pipefd_a2e_0_stream,string,size);
 }
 
 // send()

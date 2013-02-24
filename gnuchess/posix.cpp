@@ -40,14 +40,13 @@
 
 #include "posix.h"
 #include "util.h"
-#include "components.h"
+
+namespace engine {
 
 // Streams used to communicate with the adapter
 
 extern FILE *pipefd_a2e_0_stream;
 extern FILE *pipefd_e2a_1_stream;
-
-namespace engine {
 
 // constants
 

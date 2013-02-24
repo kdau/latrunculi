@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <process.h>
 
 #include "posix.h"
 #include "util.h"
@@ -125,8 +126,7 @@ void my_fatal(const char format[], ...) {
    vfprintf(stderr,format,ap);
    va_end(ap);
 
-   exit(EXIT_FAILURE);
-   // abort();
+   _endthread ();
 }
 
 // my_file_read_line()

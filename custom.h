@@ -1,9 +1,11 @@
 /******************************************************************************
  *  custom.h
  *
- *  Adapted from Public Scripts for use in mission-specific OSMs
+ *  Custom scripts for A Nice Game of Chess
+ *  Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
+ *
+ *  Adapted in part from Public Scripts
  *  Copyright (C) 2005-2011 Tom N Harris <telliamed@whoopdedo.org>
- *  Copyright (C) 2012 Kevin Daughtridge <kevin@kdau.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -24,11 +26,82 @@
 #define CUSTOM_H
 
 #if !SCR_GENSCRIPTS
+
+#include <windows.h>
+#undef GetClassName // ugh
+
 #include "BaseScript.h"
 #include "scriptvars.h"
+
 #endif // SCR_GENSCRIPTS
 
-// CHANGEME_YOUR_HEADERS
+#if !SCR_GENSCRIPTS
+/**
+ * Utility Class: ChessEngine
+ *
+ * Manages the connection to the GNU Chess engine.
+ */
+class ChessEngine
+{
+public:
+	ChessEngine ();
+	~ChessEngine ();
+
+	enum Difficulty
+	{
+		DIFF_EASY = 0,
+		DIFF_NORMAL,
+		DIFF_HARD
+	};
+	void SetDifficulty (Difficulty difficulty);
+
+	void SetOpeningsBook (const char* book_file);
+
+	void StartGame (const char* position);
+
+	void WaitUntilReady ();
+
+private:
+	bool HasReply (unsigned int wait_msec = 0);
+	bool ReadReply (const char* desired_reply = NULL);
+	bool ReadReplies (const char* desired_reply = NULL);
+	void WaitForReply (const char* reply);
+
+	void WriteCommand (const char* command);
+
+	static void EngineThread (void* pipefd);
+
+	uintptr_t engine_thread;
+	FILE* output_pipe;
+	FILE* input_pipe;
+};
+#endif // !SCR_GENSCRIPTS
+
+/**
+ * Script: ChessGame
+ * Inherits: BaseScript
+ *
+ * Coordinates the chess gameplay with the GNU Chess engine, managing the Dark
+ * Engine board representation (AI chess piece states and positions).
+ */
+#if !SCR_GENSCRIPTS
+class cScr_ChessGame : public virtual cBaseScript
+{
+public:
+	cScr_ChessGame (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnEndScript (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
+
+private:
+	ChessEngine* engine;
+	script_str position;
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("ChessGame","BaseScript",cScr_ChessGame)
+#endif // SCR_GENSCRIPTS
 
 #endif // CUSTOM_H
 

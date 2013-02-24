@@ -35,7 +35,7 @@ namespace engine {
 extern void loop  ();
 extern void event ();
 
-extern void get   (char string[], int size);
+extern bool get   (char string[], int size);
 extern void send  (const char format[], ...);
 
 }  // namespace engine

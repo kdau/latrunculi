@@ -40,7 +40,6 @@
 #include "util.h"
 #include "value.h"
 #include "vector.h"
-#include "components.h"
 
 namespace engine {
 
@@ -53,12 +52,12 @@ FILE *pipefd_e2a_1_stream;
 
 // main()
 
-int main_engine(int argc, char * argv[]) {
+void main_engine(int pipefd_a2e_0, int pipefd_e2a_1) {
 
    // Get reference stream of pipes to communicate with the adapter
 
-   pipefd_a2e_0_stream = fdopen( pipefd_a2e[0], "r" );
-   pipefd_e2a_1_stream = fdopen( pipefd_e2a[1], "w" );
+   pipefd_a2e_0_stream = fdopen( pipefd_a2e_0, "r" );
+   pipefd_e2a_1_stream = fdopen( pipefd_e2a_1, "w" );
    setvbuf(pipefd_a2e_0_stream,NULL,_IONBF,0);
    setvbuf(pipefd_e2a_1_stream,NULL,_IONBF,0); // _IOLBF breaks on Windows!
 
@@ -88,7 +87,8 @@ int main_engine(int argc, char * argv[]) {
 
    loop();
 
-   return EXIT_SUCCESS;
+   fclose (pipefd_a2e_0_stream);
+   fclose (pipefd_e2a_1_stream);
 }
 
 }  // namespace engine

@@ -3,7 +3,7 @@
 ##
 ##  Adapted from Public Scripts for use in mission-specific OSMs
 ##  Copyright (C) 2005-2011 Tom N Harris <telliamed@whoopdedo.org>
-##  Copyright (C) 2012 Kevin Daughtridge <kevin@kdau.com>
+##  Copyright (C) 2012-2013 Kevin Daughtridge <kevin@kdau.com>
 ##
 ##  This program is free software; you can redistribute it and/or modify
 ##  it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@ bindir = .
 LGDIR = lg
 SCRLIBDIR = ScriptLib
 DH2DIR = DH2
+GNUCHESSDIR = gnuchess
 
 PREFIX = i686-w64-mingw32-
 CC = $(PREFIX)gcc
@@ -47,9 +48,9 @@ DEFINES = -DWINVER=0x0400 -D_WIN32_WINNT=0x0400 -DWIN32_LEAN_AND_MEAN \
 CXXDEFINES = -DMODULE_NAME=\"$(MODULE_NAME)\"
 RCDEFINES = -DMODULE_NAME=\\\"$(MODULE_NAME)\\\"
 
-INCLUDES = -I. -I$(srcdir) -I$(LGDIR) -I$(SCRLIBDIR) -I$(DH2DIR)
-LIBDIRS = -L. -L$(LGDIR) -L$(SCRLIBDIR) -L$(DH2DIR)
-LIBS = -ldh2 -luuid
+INCLUDES = -I. -I$(srcdir) -I$(LGDIR) -I$(SCRLIBDIR) -I$(DH2DIR) -I$(GNUCHESSDIR)
+LIBDIRS = -L. -L$(LGDIR) -L$(SCRLIBDIR) -L$(DH2DIR) -L$(GNUCHESSDIR)
+LIBS = -ldh2 -luuid -lws2_32
 
 # If you care for this... # -Wno-unused-variable
 # A lot of the callbacks have unused parameters, so I turn that off.
@@ -63,12 +64,12 @@ ifdef DEBUG
 DEFINES := $(DEFINES) -DDEBUG
 CXXFLAGS := $(CXXFLAGS) -g -O0
 LDFLAGS := $(LDFLAGS) -g
-LIBS := -lScript2-d $(LIBS) -llg-d
+LIBS := -lScript2-d $(LIBS) -llg-d -lgnuchess-d
 else
 DEFINES := $(DEFINES) -DNDEBUG
 CXXFLAGS := $(CXXFLAGS) -O2
 # LDFLAGS := $(LDFLAGS)
-LIBS := -lScript2 $(LIBS) -llg
+LIBS := -lScript2 $(LIBS) -llg -lgnuchess
 endif
 
 MODULE_OBJS = \
