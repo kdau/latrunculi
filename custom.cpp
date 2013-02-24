@@ -28,7 +28,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <process.h>
-//FIXME FIXME #include <winsock2.h>
+#include <unistd.h>
 
 #include <ScriptLib.h>
 
@@ -46,6 +46,7 @@
 namespace engine { void main_engine (int pipefd_a2e_0, int pipefd_e2a_1); }
 
 ChessEngine::ChessEngine ()
+	: engine_thread (0), output_pipe (NULL), input_pipe (NULL)
 {
 	HANDLE read, write;
 	int pipefd[2] = { 0 };
@@ -56,6 +57,7 @@ ChessEngine::ChessEngine ()
 	output_pipe = _fdopen (_open_osfhandle ((intptr_t) write, _O_APPEND), "a");
 	if (pipefd[0] == -1 || output_pipe == NULL)
 		throw std::runtime_error ("could not connect engine output pipe");
+	setvbuf (output_pipe, NULL, _IONBF, 0);
 
 	if (!CreatePipe (&read, &write, NULL, 0))
 		throw std::runtime_error ("could not create engine input pipe");
@@ -63,13 +65,14 @@ ChessEngine::ChessEngine ()
 	input_pipe = _fdopen (_open_osfhandle ((intptr_t) read, _O_RDONLY), "r");
 	if (pipefd[1] == -1 || input_pipe == NULL)
 		throw std::runtime_error ("could not connect engine input pipe");
+	setvbuf (input_pipe, NULL, _IONBF, 0);
 
 	engine_thread = _beginthread (EngineThread, 0, pipefd);
 	if (engine_thread <= 0)
 		throw std::runtime_error ("could not spawn engine thread");
 
 	WriteCommand ("uci");
-	WaitForReply ("uciok");
+	ReadReplies ("uciok");
 
 #ifdef DEBUG
 	WriteCommand ("debug on");
@@ -80,12 +83,13 @@ ChessEngine::~ChessEngine ()
 {
 	try
 	{
-		WriteCommand ("quit");
+		if (engine_thread > 0 && output_pipe)
+			WriteCommand ("quit");
 	}
 	catch (...) {}
 
-	fclose (input_pipe);
-	fclose (output_pipe);
+	if (input_pipe) fclose (input_pipe);
+	if (output_pipe) fclose (output_pipe);
 }
 
 void
@@ -134,31 +138,12 @@ void
 ChessEngine::WaitUntilReady ()
 {
 	WriteCommand ("isready");
-	WaitForReply ("readyok");
-}
-
-bool
-ChessEngine::HasReply (unsigned int wait_msec)
-{
-#if 0 //FIXME FIXME
-	fd_set set[1];
-	FD_ZERO (set);
-	FD_SET (input_pipe_read, set);
-
-	timeval wait { 0, wait_msec };
-#endif //FIXME FIXME
-
-	int fds = 0;//FIXME FIXME select (input_pipe + 1, set, NULL, NULL, &wait);
-	if (fds == -1)
-		throw std::runtime_error ("could not poll engine for reply");
-	return fds > 0;
+	ReadReplies ("readyok");
 }
 
 bool
 ChessEngine::ReadReply (const char* desired_reply)
 {
-	//FIXME FIXME if (!HasReply ()) return false;
-
 	char full_reply[ENGINE_BUFSIZE] = { 0 };
 	if (fgets (full_reply, ENGINE_BUFSIZE, input_pipe) == NULL)
 		throw std::runtime_error ("could not read reply from engine");
@@ -178,9 +163,9 @@ ChessEngine::ReadReply (const char* desired_reply)
 		if (!field || !value)
 			{}
 		else if (!strcmp (field, "name"))
-			g_pfnMPrintf ("The chess engine is %s.\n", value);
+			g_pfnMPrintf ("INFO: The chess engine is %s.\n", value);
 		else if (!strcmp (field, "author"))
-			g_pfnMPrintf ("The chess engine was written by %s.\n", value);
+			g_pfnMPrintf ("INFO: The chess engine was written by %s.\n", value);
 	}
 	else if (!strcmp (reply, "bestmove"))
 	{
@@ -193,22 +178,10 @@ ChessEngine::ReadReply (const char* desired_reply)
 	return !desired_reply || !strcmp (reply, desired_reply);
 }
 
-bool
+void
 ChessEngine::ReadReplies (const char* desired_reply)
 {
-	while (HasReply ())
-		if (ReadReply (desired_reply))
-			return true;
-	return false;
-}
-
-void
-ChessEngine::WaitForReply (const char* reply)
-{
-	int cycle_count = 0;
-	while (!ReadReply (reply))
-		if (!HasReply (100) && ++cycle_count > 100) //FIXME max(cycle_count)=10
-			throw std::runtime_error ("engine took too long to reply");
+	while (!ReadReply (desired_reply));
 }
 
 void
@@ -251,7 +224,7 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 
 	SService<IEngineSrv> pES (g_pScriptManager);
 	cScrStr book;
-	if (pES->FindFileInPath ("script_module_path", "openings.dat", book)) //FIXME This still isn't an absolute file name.
+	if (pES->FindFileInPath ("script_module_path", "openings.dat", book)) //FIXME This still isn't an absolute file name. Is that okay?
 		engine->SetOpeningsBook (book); //FIXME Should the book string be freed?
 	else
 		engine->SetOpeningsBook (NULL);

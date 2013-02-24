@@ -62,11 +62,8 @@ public:
 	void WaitUntilReady ();
 
 private:
-	bool HasReply (unsigned int wait_msec = 0);
 	bool ReadReply (const char* desired_reply = NULL);
-	bool ReadReplies (const char* desired_reply = NULL);
-	void WaitForReply (const char* reply);
-
+	void ReadReplies (const char* desired_reply = NULL);
 	void WriteCommand (const char* command);
 
 	static void EngineThread (void* pipefd);

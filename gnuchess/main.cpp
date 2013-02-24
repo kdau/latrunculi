@@ -58,8 +58,6 @@ void main_engine(int pipefd_a2e_0, int pipefd_e2a_1) {
 
    pipefd_a2e_0_stream = fdopen( pipefd_a2e_0, "r" );
    pipefd_e2a_1_stream = fdopen( pipefd_e2a_1, "w" );
-   setvbuf(pipefd_a2e_0_stream,NULL,_IONBF,0);
-   setvbuf(pipefd_e2a_1_stream,NULL,_IONBF,0); // _IOLBF breaks on Windows!
 
    // init
 
