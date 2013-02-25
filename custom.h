@@ -116,6 +116,8 @@ public:
 	ChessEngine ();
 	~ChessEngine ();
 
+	void RecordMove (const char* move);
+
 	enum Difficulty
 	{
 		DIFF_EASY = 0,
@@ -186,6 +188,7 @@ public:
 	struct Square
 	{
 		Square (File _file = FILE_NONE, Rank _rank = RANK_NONE);
+		Square (object square_marker);
 		operator bool () const;
 		Square Offset (Square by) const;
 
@@ -198,25 +201,26 @@ public:
 	enum Camp
 	{
 		CAMP_NONE = 0,
-		CAMP_WHITE,
-		CAMP_BLACK
+		CAMP_WHITE = 'w',
+		CAMP_BLACK = 'b'
 	};
 
 	enum PieceType
 	{
 		PIECE_NONE = ' ',
-		PIECE_KING = 'k',
-		PIECE_QUEEN = 'q',
-		PIECE_ROOK = 'r',
-		PIECE_BISHOP = 'b',
-		PIECE_KNIGHT = 'n',
-		PIECE_PAWN = 'p'
+		PIECE_KING = 'K',
+		PIECE_QUEEN = 'Q',
+		PIECE_ROOK = 'R',
+		PIECE_BISHOP = 'B',
+		PIECE_KNIGHT = 'N',
+		PIECE_PAWN = 'P'
 	};
 
 	struct Piece
 	{
 		Piece (Camp _camp = CAMP_NONE, PieceType _type = PIECE_NONE);
 		Piece (char code);
+		operator bool () const;
 		operator char () const;
 		Camp camp;
 		PieceType type;
@@ -245,7 +249,8 @@ public:
 
 	ChessBoard ();
 
-	Piece operator[] (const Square& square) const;
+	Piece GetAt (const Square& square) const;
+	void SetAt (const Square& square, const Piece& piece = Piece ());
 
 // representations and persistence
 
@@ -255,23 +260,36 @@ public:
 	void Load (object store);
 	void Save (object store);
 
-// possible moves analysis
+// movement
+
+	// minimal validation is performed
+	void PerformMove (const Square& from, const Square& to);
+
+	enum MoveType
+	{
+		MOVE_NONE = 0,
+		MOVE_EMPTY = 1,
+		MOVE_CAPTURE = 2,
+		MOVE_CASTLING = 4,
+		MOVE_EN_PASSANT = 8
+	};
 
 	struct Move
 	{
 		Square from;
 		Square to;
+		MoveType type;
 	};
 	typedef std::vector<Move> MoveSet;
 
 	void EnumerateMoves (MoveSet& set);
 
 private:
-	void TryMovePath (MoveSet& set, Piece piece, Square origin,
-		char file_dirn, char rank_dirn);
-	bool TryMovePoint (MoveSet& set, Piece piece, Square origin,
-		char file_vect, char rank_vect,
-		bool if_hostile = true, bool if_empty = true);
+	void TryMovePath (MoveSet& set, const Piece& piece,
+		const Square& origin, char file_dirn, char rank_dirn);
+	bool TryMovePoint (MoveSet& set, const Piece& piece,
+		const Square& origin, char file_vect, char rank_vect,
+		int allowed_types = MOVE_EMPTY | MOVE_CAPTURE);
 };
 #endif // !SCR_GENSCRIPTS
 
@@ -303,12 +321,22 @@ private:
 	void AnalyzeBoard ();
 
 	void SelectPiece (object piece);
-	void DeselectPieces ();
+	void ClearSelection ();
+	void SelectMove (object destination);
 
-	void MakeMove (object square);
+	void BeginComputerMove ();
+	void FinishComputerMove ();
+
+	void PerformMove (object piece, object origin, object destination);
 
 	ChessEngine* engine;
 	ChessBoard board;
+	enum PlayState
+	{
+		STATE_INTERACTIVE,
+		STATE_ANIMATING,
+		STATE_COMPUTING
+	} play_state;
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessGame","BaseScript",cScr_ChessGame)
@@ -352,11 +380,16 @@ public:
 
 protected:
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnAIModeChange (sAIModeChangeMsg* pMsg,
+		cMultiParm& mpReply);
 
 private:
 	void Select ();
 	void Deselect ();
+
+	void RestInPeace ();
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessPiece","BaseAIScript",cScr_ChessPiece)

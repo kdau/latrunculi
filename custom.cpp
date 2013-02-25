@@ -216,6 +216,15 @@ ChessEngine::~ChessEngine ()
 }
 
 void
+ChessEngine::RecordMove (const char* move)
+{
+	char move_command[ENGINE_BUFSIZE];
+	snprintf (move_command, ENGINE_BUFSIZE,
+		"position moves %s", move);
+	WriteCommand (move_command);
+}
+
+void
 ChessEngine::SetDifficulty (Difficulty difficulty)
 {
 	if (difficulty == DIFF_EASY)
@@ -333,6 +342,18 @@ ChessBoard::Square::Square (File _file, Rank _rank)
 	: file (_file), rank (_rank)
 {}
 
+ChessBoard::Square::Square (object square_marker)
+	: file (FILE_NONE), rank (RANK_NONE)
+{
+	cAnsiStr square_name = ObjectToStr (square_marker);
+	if (square_name.GetLength () == 8 &&
+		!strncmp (square_name, "Square", 6))
+	{
+		file = (File) tolower (square_name.GetAt (6));
+		rank = (Rank) tolower (square_name.GetAt (7));
+	}
+}
+
 ChessBoard::Square::operator bool () const
 {
 	return file >= FILE_a && file <= FILE_h &&
@@ -378,6 +399,11 @@ ChessBoard::Piece::Piece (char code)
 	}
 }
 
+ChessBoard::Piece::operator bool () const
+{
+	return camp != CAMP_NONE && type != PIECE_NONE;
+}
+
 ChessBoard::Piece::operator char () const
 {
 	if (camp == CAMP_WHITE)
@@ -407,11 +433,19 @@ ChessBoard::ChessBoard ()
 }
 
 ChessBoard::Piece
-ChessBoard::operator[] (const Square& square) const
+ChessBoard::GetAt (const Square& square) const
 {
 	if (!square) return '\0';
 	return Piece (piece_placement
 		[(square.rank - RANK_1) * 8 + (square.file - FILE_a)]);
+}
+
+void
+ChessBoard::SetAt (const Square& square, const Piece& piece)
+{
+	if (!square) return;
+	piece_placement [(square.rank - RANK_1) * 8 + (square.file - FILE_a)]
+		= piece;
 }
 
 void
@@ -439,8 +473,8 @@ ChessBoard::EncodeFEN (char* buffer)
 	}
 
 	snprintf (buffer, FEN_BUFSIZE, "%s %c %s %s %u %u", board_fen,
-		(active_camp == CAMP_WHITE) ? 'w' : 'b',
-		castling, en_passant, halfmove_clock, fullmove_number);
+		(char) active_camp, castling, en_passant, halfmove_clock,
+		fullmove_number);
 }
 
 #define load_script_int(type, name) \
@@ -494,6 +528,28 @@ ChessBoard::Save (object store)
 #undef save_script_var
 
 void
+ChessBoard::PerformMove (const Square& from, const Square& to)
+{
+	Piece mover = GetAt (from);
+	if (!mover) return;
+
+	SetAt (from);
+	SetAt (to, mover);
+
+	//FIXME Handle more complex move types: en passant, castling, promotion, etc.
+
+	if (active_camp == CAMP_WHITE)
+		active_camp = CAMP_BLACK;
+	else
+	{
+		active_camp = CAMP_WHITE;
+		++fullmove_number;
+	}
+
+	//FIXME Update en passant, castling, and halfmove clock.
+}
+
+void
 ChessBoard::EnumerateMoves (MoveSet& set)
 {
 	set.clear ();
@@ -501,7 +557,9 @@ ChessBoard::EnumerateMoves (MoveSet& set)
 	for (char file = FILE_a; file <= FILE_h; ++file)
 	{
 		Square origin ((File) file, (Rank) rank);
-		Piece piece = (*this)[origin];
+
+		Piece piece = GetAt (origin);
+		if (piece.camp != active_camp) continue;
 
 		switch (piece.type)
 		{
@@ -548,12 +606,11 @@ ChessBoard::EnumerateMoves (MoveSet& set)
 		    {
 			char dirn = (piece.camp == CAMP_WHITE) ? 1 : -1;
 			char orig_rank = (piece.camp == CAMP_WHITE) ? RANK_2 : RANK_7;
-			bool one_okay =
-				TryMovePoint (set, piece, origin, 0, dirn, false);
+			bool one_okay = TryMovePoint (set, piece, origin, 0, dirn, MOVE_EMPTY);
 			if (one_okay && (rank == orig_rank))
-				TryMovePoint (set, piece, origin, 0, 2 * dirn, false);
-			TryMovePoint (set, piece, origin, -1, dirn, true, false);
-			TryMovePoint (set, piece, origin,  1, dirn, true, false);
+				TryMovePoint (set, piece, origin, 0, 2 * dirn, MOVE_EMPTY);
+			TryMovePoint (set, piece, origin, -1, dirn, MOVE_CAPTURE);
+			TryMovePoint (set, piece, origin,  1, dirn, MOVE_CAPTURE);
 			//FIXME Consider en passant capture.
 			break;
 		    }
@@ -564,45 +621,52 @@ ChessBoard::EnumerateMoves (MoveSet& set)
 }
 
 void
-ChessBoard::TryMovePath (MoveSet& set, Piece piece, Square origin,
+ChessBoard::TryMovePath (MoveSet& set, const Piece& piece, const Square& origin,
 	char file_dirn, char rank_dirn)
 {
-	char file_delta = 0, rank_delta = 0;
+	char file_vect = 0, rank_vect = 0;
 	while (true)
 	{
-		file_delta += file_dirn;
-		rank_delta += rank_dirn;
-		if (TryMovePoint (set, piece, origin, file_delta, rank_delta,
-				true, false)) // if_hostile, !if_empty
+		file_vect += file_dirn;
+		rank_vect += rank_dirn;
+
+		if (TryMovePoint (set, piece, origin,
+				file_vect, rank_vect, MOVE_CAPTURE))
 			return; // piece capture required, so can't go farther
-		if (!TryMovePoint (set, piece, origin, file_delta, rank_delta,
-				false, true)) // !if_hostile, if_empty
+
+		if (!TryMovePoint (set, piece, origin,
+				file_vect, rank_vect, MOVE_EMPTY))
 			return; // something else in the way
 	}
 }
 
 bool
-ChessBoard::TryMovePoint (MoveSet& set, Piece piece, Square origin,
-	char file_vect, char rank_vect, bool if_hostile, bool if_empty)
+ChessBoard::TryMovePoint (MoveSet& set, const Piece& piece,
+	const Square& origin, char file_vect, char rank_vect, int allowed_types)
 {
 	Square offset ((File) file_vect, (Rank) rank_vect);
 	Square destination = origin.Offset (offset);
 	if (!destination) return false; // invalid position
 
-	Piece occupant = (*this)[destination];
+	MoveType type = MOVE_NONE;
+	Piece occupant = GetAt (destination);
 	if (occupant)
 	{
 		if (occupant.camp == piece.camp)
-			return false; // friendly occupant
-		else if (!if_hostile)
-			return false;
+			return false; // can't capture friendly occupant
+		else if (!(allowed_types & MOVE_CAPTURE))
+			return false; // this can't capture hostile occupant
+		else
+			type = MOVE_CAPTURE;
 	}
-	else if (!if_empty)
-		return false;
+	else if (!(allowed_types & MOVE_EMPTY))
+		return false; // this can't move to empty square
+	else
+		type = MOVE_EMPTY;
 
-	//FIXME Filter otherwise illegal moves.
+	//FIXME Filter otherwise illegal moves. Mark castlings and en passants.
 
-	Move move = { origin, destination };
+	Move move = { origin, destination, type };
 	set.push_back (move);
 	return true;
 }
@@ -613,7 +677,7 @@ ChessBoard::TryMovePoint (MoveSet& set, Piece piece, Square origin,
 
 cScr_ChessGame::cScr_ChessGame (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
-	  engine (NULL)
+	  engine (NULL), play_state (STATE_ANIMATING)
 {}
 
 long
@@ -642,12 +706,19 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 		char position[FEN_BUFSIZE];
 		board.EncodeFEN (position);
 		engine->StartGame (position);
-		//FIXME Anything else now? What if it's the computer's move? Is that even a valid state to persist?
+		if (board.active_camp == ChessBoard::CAMP_WHITE)
+			play_state = STATE_INTERACTIVE; //FIXME Anything else?
+		else // CAMP_BLACK
+		{
+			play_state = STATE_COMPUTING;
+			//FIXME How to proceed?
+		}
 	}
 	else // new game
 	{
 		board.Save (ObjId ());
 		engine->StartGame (NULL);
+		play_state = STATE_INTERACTIVE;
 	}
 
 	return 0;
@@ -671,7 +742,7 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 	{
 		//FIXME What, if any, of this should be in BeginScript or v-v?
 		AnalyzeBoard ();
-		//FIXME Begin the game.
+		//FIXME Play other game-beginning stuff.
 	}
 	return 0;
 }
@@ -682,8 +753,8 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 	if (!strcmp (pMsg->message, "SelectPiece"))
 		SelectPiece (pMsg->from);
 
-	else if (!strcmp (pMsg->message, "MakeMove"))
-		MakeMove (pMsg->from);
+	else if (!strcmp (pMsg->message, "SelectMove"))
+		SelectMove (pMsg->from);
 
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
@@ -709,8 +780,6 @@ cScr_ChessGame::GetPieceAt (ChessBoard::Square _square)
 void
 cScr_ChessGame::AnalyzeBoard ()
 {
-	//FIXME When/where are the persistent variables updated?
-
 	// erase old possible-move links
 	SInterface<ITraitManager> pTM (g_pScriptManager);
 	object archetype = StrToObject ("ChessSquare");
@@ -736,14 +805,14 @@ cScr_ChessGame::AnalyzeBoard ()
 void
 cScr_ChessGame::SelectPiece (object piece)
 {
-	//FIXME Confirm that game state is okay for piece selection. Or block frob entirely when it's not...
-	DeselectPieces ();
+	if (play_state != STATE_INTERACTIVE) return;
+	ClearSelection ();
 	CreateLink ("ScriptParams", ObjId (), piece, "SelectedPiece");
 	SimpleSend (ObjId (), piece, "Select");
 }
 
 void
-cScr_ChessGame::DeselectPieces ()
+cScr_ChessGame::ClearSelection ()
 {
 	SService<IPropertySrv> pPS (g_pScriptManager);
 
@@ -755,16 +824,84 @@ cScr_ChessGame::DeselectPieces ()
 }
 
 void
-cScr_ChessGame::MakeMove (object square)
+cScr_ChessGame::SelectMove (object destination)
 {
-	//FIXME Confirm that game state is okay for movement. Or block frob entirely when it's not...
+	if (play_state != STATE_INTERACTIVE) return;
 
 	object piece = GetOneLinkByDataDest
 		("ScriptParams", ObjId (), "SelectedPiece", -1);
-	DeselectPieces ();
-	if (!piece || !square) return;
+	object origin = LinkIter (0, piece, "Population").Source ();
+	if (!piece || !origin || !destination) return;
 
-	//FIXME Perform the move of @piece to @square. Proceed accordingly from there.
+	ClearSelection ();
+
+	if (engine)
+	{
+		ChessBoard::Square osquare (origin), dsquare (destination);
+		char move[5] = "XXXX";
+		move[0] = osquare.file; move[1] = osquare.rank;
+		move[2] = dsquare.file; move[3] = dsquare.rank;
+		engine->RecordMove (move);
+	}
+
+	PerformMove (piece, origin, destination);
+}
+
+void
+cScr_ChessGame::BeginComputerMove ()
+{
+	play_state = STATE_COMPUTING;
+	//FIXME Disable piece selection.
+	//FIXME Start engine rolling.
+	//FIXME Play thinking effects.
+	//FIXME Set timer to finish.
+}
+
+void
+cScr_ChessGame::FinishComputerMove ()
+{
+	//FIXME Demand move from engine.
+	//FIXME Perform move.
+}
+
+void
+cScr_ChessGame::PerformMove (object piece, object origin, object destination)
+{
+	play_state = STATE_ANIMATING;
+	//FIXME Disable piece selection.
+
+	board.PerformMove (origin, destination);
+	board.Save (ObjId ());
+	AnalyzeBoard ();
+
+	//FIXME Handle en passant attack targets.
+	object occupant = GetPieceAt (destination);
+	if (occupant)
+	{
+		DestroyLink (LinkIter (destination, occupant, "Population"));
+		//FIXME Have piece attack occupant. Delay below until after.
+		SService<IActReactSrv> pARS (g_pScriptManager);
+		pARS->ARStimulate (occupant, StrToObject ("FireStim"), 100.0, piece);
+	}
+
+	DestroyLink (LinkIter (origin, piece, "Population"));
+	CreateLink ("Population", destination, piece);
+
+	SService<IAIScrSrv> pAIS (g_pScriptManager);
+	true_bool result;
+	pAIS->MakeGotoObjLoc (result, piece, destination, kNormalSpeed,
+		kHighPriorityAction, cMultiParm::Undef);
+
+	//FIXME Handle castling and promotion.
+
+	//FIXME Delay below until after effects play.
+	if (board.active_camp == ChessBoard::CAMP_WHITE)
+	{
+		//FIXME Enable piece selection.
+		play_state = STATE_INTERACTIVE;
+	}
+	else
+		BeginComputerMove ();
 }
 
 
@@ -779,20 +916,10 @@ long
 cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
 	if (!strcmp (pMsg->message, "EnableMove"))
-	{
 		AddSingleMetaProperty ("M-PossibleMove", ObjId ());
 
-		SService<IPropertySrv> pPS (g_pScriptManager);
-		pPS->Add (ObjId (), "SelfLit"); // dynamic light
-	}
-
 	else if (!strcmp (pMsg->message, "DisableMove"))
-	{
 		RemoveSingleMetaProperty ("M-PossibleMove", ObjId ());
-
-		SService<IPropertySrv> pPS (g_pScriptManager);
-		pPS->Remove (ObjId (), "SelfLit"); // dynamic light
-	}
 
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
@@ -800,7 +927,8 @@ cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 long
 cScr_ChessSquare::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 {
-	SimpleSend (ObjId (), StrToObject ("TheGame"), "MakeMove");
+	PlaySchemaAmbient (ObjId (), StrToObject ("bowtwang_player"));
+	SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectMove");
 	return 0;
 }
 
@@ -826,9 +954,28 @@ cScr_ChessPiece::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 }
 
 long
+cScr_ChessPiece::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
+{
+	if (!strcmp (pMsg->name, "RestInPeace"))
+		RestInPeace ();
+
+	return cBaseScript::OnTimer (pMsg, mpReply);
+}
+
+long
 cScr_ChessPiece::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 {
+	PlaySchemaAmbient (ObjId (), StrToObject ("bow_begin"));
 	SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectPiece");
+	return 0;
+}
+
+long
+cScr_ChessPiece::OnAIModeChange (sAIModeChangeMsg* pMsg, cMultiParm&)
+{
+	if (pMsg->mode == kAIM_Dead) // killed or knocked out
+		//FIXME Become non-physical to avoid blocking new occupant?
+		SetTimedMessage ("RestInPeace", 1000, kSTM_OneShot);
 	return 0;
 }
 
@@ -842,8 +989,6 @@ cScr_ChessPiece::Select ()
 
 	for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
 		SimpleSend (ObjId (), move.Destination (), "EnableMove");
-
-	PlaySchemaAmbient (ObjId (), StrToObject ("bow_begin"));
 }
 
 void
@@ -856,5 +1001,13 @@ cScr_ChessPiece::Deselect ()
 
 	for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
 		SimpleSend (ObjId (), move.Destination (), "DisableMove");
+}
+
+void
+cScr_ChessPiece::RestInPeace ()
+{
+	//FIXME Instead, teleport to the appropriate graveyard with a puff of smoke.
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	pOS->Destroy (ObjId ());
 }
 
