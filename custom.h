@@ -33,6 +33,7 @@
 
 #include "BaseScript.h"
 #include "scriptvars.h"
+#include "chess.h"
 
 #endif // SCR_GENSCRIPTS
 
@@ -152,168 +153,6 @@ private:
 
 
 
-#if !SCR_GENSCRIPTS
-/**
- * Utility Class: ChessBoard
- *
- * Stores and analyzes the instantaneous state of a chess game.
- */
-class ChessBoard
-{
-public:
-
-// squares
-
-	enum File
-	{
-		FILE_NONE = 0,
-		FILE_a = 'a',
-		FILE_b = 'b',
-		FILE_c = 'c',
-		FILE_d = 'd',
-		FILE_e = 'e',
-		FILE_f = 'f',
-		FILE_g = 'g',
-		FILE_h = 'h'
-	};
-
-	enum Rank
-	{
-		RANK_NONE = 0,
-		RANK_1 = '1',
-		RANK_2 = '2',
-		RANK_3 = '3',
-		RANK_4 = '4',
-		RANK_5 = '5',
-		RANK_6 = '6',
-		RANK_7 = '7',
-		RANK_8 = '8'
-	};
-
-	struct Square
-	{
-		Square (File _file = FILE_NONE, Rank _rank = RANK_NONE);
-		Square (const char* position);
-		Square (object square_marker);
-
-		operator bool () const;
-		Square Offset (Square by) const;
-
-		File file;
-		Rank rank;
-	};
-
-// pieces
-
-	enum Camp
-	{
-		CAMP_NONE = 0,
-		CAMP_WHITE = 'w',
-		CAMP_BLACK = 'b'
-	};
-	static Camp Enemy (Camp of);
-
-	enum PieceType
-	{
-		PIECE_NONE = ' ',
-		PIECE_KING = 'K',
-		PIECE_QUEEN = 'Q',
-		PIECE_ROOK = 'R',
-		PIECE_BISHOP = 'B',
-		PIECE_KNIGHT = 'N',
-		PIECE_PAWN = 'P'
-	};
-
-	struct Piece
-	{
-		Piece (Camp _camp = CAMP_NONE, PieceType _type = PIECE_NONE);
-		Piece (char code);
-
-		operator bool () const;
-		char Code () const;
-
-		Camp camp;
-		PieceType type;
-	};
-
-// state information
-
-	enum Castling
-	{
-		CASTLE_NONE = 0,
-		CASTLE_KINGSIDE = 1,
-		CASTLE_QUEENSIDE = 2
-	};
-
-#define BOARD_SIZE 65
-	char piece_placement[BOARD_SIZE];
-	static const char INITIAL_PLACEMENT[BOARD_SIZE];
-
-	Camp active_camp;
-	int castling_white;
-	int castling_black;
-	Square en_passant_square;
-	uint halfmove_clock;
-	uint fullmove_number;
-
-// constructor and data access
-
-	ChessBoard ();
-
-	Piece GetAt (const Square& square) const;
-	void SetAt (const Square& square, const Piece& piece = Piece ());
-	Square FindPiece (const Piece& piece, const Square& last = Square ())
-		const;
-
-// representations and persistence
-
-#define FEN_BUFSIZE 128
-	void EncodeFEN (char* buffer);
-
-	void Load (object store);
-	void Save (object store);
-
-// movement
-
-	bool IsUnderAttack (const Square& square, Camp camp) const;
-	bool IsInCheck (Camp camp) const;
-
-	// minimal validation is performed
-	void PerformMove (const Square& from, const Square& to);
-
-	enum MoveType
-	{
-		MOVE_NONE = 0,
-		MOVE_EMPTY = 1,
-		MOVE_CAPTURE = 2,
-		MOVE_CASTLING = 4,
-		MOVE_EN_PASSANT = 8,
-		MOVE_PROMOTION = 16
-	};
-
-	struct Move
-	{
-		Square from;
-		Square to;
-		MoveType type;
-	};
-	typedef std::vector<Move> MoveSet;
-
-	void EnumerateMoves (MoveSet& set) const;
-
-private:
-	void EnumeratePieceMoves (MoveSet& set, const Piece& piece,
-		const Square& origin) const;
-	void TryMovePath (MoveSet& set, const Piece& piece,
-		const Square& origin, char file_dirn, char rank_dirn) const;
-	bool TryMovePoint (MoveSet& set, const Piece& piece,
-		const Square& origin, char file_vect, char rank_vect,
-		int allowed_types = MOVE_EMPTY | MOVE_CAPTURE) const;
-};
-#endif // !SCR_GENSCRIPTS
-
-
-
 /**
  * Script: ChessGame
  * Inherits: BaseScript
@@ -335,8 +174,9 @@ protected:
 	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 
 private:
-	object GetSquare (ChessBoard::Square square);
-	object GetPieceAt (ChessBoard::Square square);
+	object GetSquare (const chess::Square& square);
+	chess::Square GetSquare (object square);
+	object GetPieceAt (const chess::Square& square);
 
 	void AnalyzeBoard ();
 	void UpdatePieceSelection ();
@@ -351,7 +191,11 @@ private:
 	void PerformMove (object piece, object origin, object destination);
 
 	ChessEngine* engine;
-	ChessBoard board;
+	chess::Board* board;
+
+	script_str fen;
+	script_int state_data;
+
 	enum PlayState
 	{
 		STATE_INTERACTIVE,

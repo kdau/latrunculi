@@ -358,464 +358,64 @@ ChessEngine::EngineThread (void* _pipefd)
 
 
 
-/* ChessBoard::Square */
-
-ChessBoard::Square::Square (File _file, Rank _rank)
-	: file (_file), rank (_rank)
-{}
-
-ChessBoard::Square::Square (const char* position)
-	: file (FILE_NONE), rank (RANK_NONE)
-{
-	if (strlen (position) >= 2)
-	{
-		file = (File) tolower (position[0]);
-		rank = (Rank) position[1];
-	}
-}
-
-ChessBoard::Square::Square (object square_marker)
-	: file (FILE_NONE), rank (RANK_NONE)
-{
-	cAnsiStr square_name = ObjectToStr (square_marker);
-	if (square_name.GetLength () == 8 &&
-		!strncmp (square_name, "Square", 6))
-	{
-		file = (File) tolower (square_name.GetAt (6));
-		rank = (Rank) square_name.GetAt (7);
-	}
-}
-
-ChessBoard::Square::operator bool () const
-{
-	return file >= FILE_a && file <= FILE_h &&
-		rank >= RANK_1 && rank <= RANK_8;
-}
-
-ChessBoard::Square
-ChessBoard::Square::Offset (Square by) const
-{
-	Square result;
-	result.file = File (file + by.file);
-	result.rank = Rank (rank + by.rank);
-	return result ? result : Square ();
-}
-
-
-
-/* ChessBoard::Piece */
-
-#define BLACK_DELTA ('a' - 'A')
-
-ChessBoard::Camp
-ChessBoard::Enemy (Camp of)
-{
-	switch (of)
-	{
-		case CAMP_WHITE: return CAMP_BLACK;
-		case CAMP_BLACK: return CAMP_WHITE;
-		default: return CAMP_NONE;
-	}
-}
-
-ChessBoard::Piece::Piece (Camp _camp, PieceType _type)
-	: camp (_camp), type (_type)
-{}
-
-ChessBoard::Piece::Piece (char code)
-	: camp (CAMP_NONE), type (PIECE_NONE)
-{
-	char code2 = code - BLACK_DELTA;
-	if (code == PIECE_KING || code == PIECE_QUEEN ||
-		code == PIECE_ROOK || code == PIECE_BISHOP ||
-		code == PIECE_KNIGHT || code == PIECE_PAWN)
-	{
-		camp = CAMP_WHITE;
-		type = (PieceType) code;
-	}
-	else if (code2 == PIECE_KING || code2 == PIECE_QUEEN ||
-		code2 == PIECE_ROOK || code2 == PIECE_BISHOP ||
-		code2 == PIECE_KNIGHT || code2 == PIECE_PAWN)
-	{
-		camp = CAMP_BLACK;
-		type = (PieceType) code2;
-	}
-}
-
-ChessBoard::Piece::operator bool () const
-{
-	return camp != CAMP_NONE && type != PIECE_NONE;
-}
-
-char
-ChessBoard::Piece::Code () const
-{
-	if (camp == CAMP_WHITE)
-		return type;
-	else if (camp == CAMP_BLACK)
-		return type + BLACK_DELTA;
-	else
-		return PIECE_NONE;
-}
-
-
-
-/* ChessBoard */
-
-const char ChessBoard::INITIAL_PLACEMENT[BOARD_SIZE] =
-	"RNBQKBNRPPPPPPPP                                pppppppprnbqkbnr";
-
-ChessBoard::ChessBoard ()
-	: active_camp (CAMP_WHITE),
-	  castling_white (CASTLE_KINGSIDE | CASTLE_QUEENSIDE),
-	  castling_black (CASTLE_KINGSIDE | CASTLE_QUEENSIDE),
-	  en_passant_square (FILE_NONE, RANK_NONE),
-	  halfmove_clock (0),
-	  fullmove_number (1)
-{
-	strncpy (piece_placement, INITIAL_PLACEMENT, sizeof (piece_placement));
-}
-
-ChessBoard::Piece
-ChessBoard::GetAt (const Square& square) const
-{
-	if (!square) return '\0';
-	return Piece (piece_placement
-		[(square.rank - RANK_1) * 8 + (square.file - FILE_a)]);
-}
-
-void
-ChessBoard::SetAt (const Square& square, const Piece& piece)
-{
-	if (!square) return;
-	piece_placement [(square.rank - RANK_1) * 8 + (square.file - FILE_a)]
-		= piece.Code ();
-}
-
-ChessBoard::Square
-ChessBoard::FindPiece (const Piece& piece, const Square& last) const
-{
-	return Square (); //FIXME Find the piece.
-}
-
-void
-ChessBoard::EncodeFEN (char* buffer)
-{
-	if (!buffer) return;
-	char* ptr;
-
-	char board_fen[FEN_BUFSIZE]; ptr = board_fen;
-	//FIXME Read off board into board_fen in FEN format.
-
-	char castling[5]; ptr = castling;
-	if (castling_white & CASTLE_KINGSIDE) *ptr++ = 'K';
-	if (castling_white & CASTLE_QUEENSIDE) *ptr++ = 'Q';
-	if (castling_black & CASTLE_KINGSIDE) *ptr++ = 'k';
-	if (castling_black & CASTLE_QUEENSIDE) *ptr++ = 'q';
-	if (ptr == castling) *ptr++ = '-';
-	*ptr = '\0';
-
-	char en_passant[3] = "-\0";
-	if (en_passant_square)
-	{
-		en_passant[0] = en_passant_square.file;
-		en_passant[1] = en_passant_square.rank;
-	}
-
-	snprintf (buffer, FEN_BUFSIZE, "%s %c %s %s %u %u", board_fen,
-		(char) active_camp, castling, en_passant, halfmove_clock,
-		fullmove_number);
-}
-
-#define load_script_int(type, name) \
-	{ script_int _##name ("ChessGame", #name, store); \
-	if (_##name.Valid ()) name = (type) (int) _##name; }
-
-void
-ChessBoard::Load (object store)
-{
-	script_str _piece_placement ("ChessGame", "piece_placement", store);
-	if (_piece_placement.Valid ())
-		strncpy (piece_placement, _piece_placement, BOARD_SIZE);
-
-	load_script_int (Camp, active_camp);
-	load_script_int (int, castling_white);
-	load_script_int (int, castling_black);
-
-	script_str eps ("ChessGame", "en_passant_square", store);
-	if (eps.Valid ()) en_passant_square = Square (eps);
-
-	load_script_int (uint, halfmove_clock);
-	load_script_int (uint, fullmove_number);
-}
-
-#undef load_script_var
-#define save_script_var(type, name) \
-	{ script_##type ("ChessGame", #name, store) = name; }
-
-void
-ChessBoard::Save (object store)
-{
-	save_script_var (str, piece_placement);
-	save_script_var (int, active_camp);
-	save_script_var (int, castling_white);
-	save_script_var (int, castling_black);
-
-	char eps[3] = "\0\0";
-	eps[0] = en_passant_square.file;
-	eps[1] = en_passant_square.rank;
-	script_str ("ChessGame", "en_passant_square", store) = eps;
-
-	save_script_var (int, halfmove_clock);
-	save_script_var (int, fullmove_number);
-}
-
-#undef save_script_var
-
-bool
-ChessBoard::IsUnderAttack (const Square& square, Camp camp) const
-{
-	ChessBoard test (*this);
-	test.active_camp = Enemy (camp);
-
-	MoveSet moves;
-	test.EnumerateMoves (moves);
-
-	//FIXME Iterate over moves and return true if any targets the square.
-	return false;
-}
-
-bool
-ChessBoard::IsInCheck (Camp camp) const
-{
-	Square square = FindPiece (Piece (camp, PIECE_KING));
-	return square ? IsUnderAttack (square, camp) : true; //FIXME How is an infinite loop avoided?
-}
-
-void
-ChessBoard::PerformMove (const Square& from, const Square& to)
-{
-	Piece mover = GetAt (from);
-	if (!mover) return;
-
-	SetAt (from); // remove mover from origin
-
-	//FIXME Handle promotion.
-
-	SetAt (to, mover); // place mover in destination
-
-	//FIXME Handle rook portion of castling.
-
-	//FIXME Handle en passant capture.
-
-	active_camp = Enemy (active_camp);
-
-	//FIXME Update en passant square.
-
-	int& castling = (mover.camp == CAMP_WHITE)
-		? castling_white : castling_black;
-	if (mover.type == PIECE_KING)
-		castling = CASTLE_NONE;
-	else if (mover.type == PIECE_ROOK && from.rank ==
-		(mover.camp == CAMP_WHITE) ? RANK_1 : RANK_8)
-	{
-		if (from.file == FILE_a)
-			castling &= ~CASTLE_QUEENSIDE;
-		else if (from.file == FILE_h)
-			castling &= ~CASTLE_KINGSIDE;
-	}
-
-	//FIXME Update halfmove clock.
-
-	if (mover.camp == CAMP_BLACK)
-		++fullmove_number;
-}
-
-void
-ChessBoard::EnumerateMoves (MoveSet& set) const
-{
-	set.clear ();
-	for (char rank = RANK_1; rank <= RANK_8; ++rank)
-	for (char file = FILE_a; file <= FILE_h; ++file)
-	{
-		Square origin ((File) file, (Rank) rank);
-		EnumeratePieceMoves (set, GetAt (origin), origin);
-	}
-}
-
-void
-ChessBoard::EnumeratePieceMoves (MoveSet& set, const Piece& piece,
-	const Square& origin) const
-{
-	if (piece.camp != active_camp) return;
-
-	switch (piece.type)
-	{
-	case PIECE_ROOK:
-	case PIECE_BISHOP:
-	case PIECE_QUEEN:
-		if (piece.type != PIECE_ROOK)
-		{
-			TryMovePath (set, piece, origin,  1,  1);
-			TryMovePath (set, piece, origin, -1,  1);
-			TryMovePath (set, piece, origin,  1, -1);
-			TryMovePath (set, piece, origin, -1, -1);
-		}
-		if (piece.type != PIECE_BISHOP)
-		{
-			TryMovePath (set, piece, origin,  0,  1);
-			TryMovePath (set, piece, origin,  0, -1);
-			TryMovePath (set, piece, origin,  1,  0);
-			TryMovePath (set, piece, origin, -1,  0);
-		}
-		break;
-	case PIECE_KNIGHT:
-		TryMovePoint (set, piece, origin,  1,  2);
-		TryMovePoint (set, piece, origin,  2,  1);
-		TryMovePoint (set, piece, origin, -1,  2);
-		TryMovePoint (set, piece, origin, -2,  1);
-		TryMovePoint (set, piece, origin,  1, -2);
-		TryMovePoint (set, piece, origin,  2, -1);
-		TryMovePoint (set, piece, origin, -1, -2);
-		TryMovePoint (set, piece, origin, -2, -1);
-		break;
-	case PIECE_KING:
-	    {
-		TryMovePoint (set, piece, origin,  1,  1);
-		TryMovePoint (set, piece, origin,  1,  0);
-		TryMovePoint (set, piece, origin,  1, -1);
-		TryMovePoint (set, piece, origin,  0, -1);
-		TryMovePoint (set, piece, origin, -1, -1);
-		TryMovePoint (set, piece, origin, -1,  0);
-		TryMovePoint (set, piece, origin, -1,  1);
-		TryMovePoint (set, piece, origin,  0,  1);
-
-		int castling = (piece.camp == CAMP_WHITE)
-			? castling_white : castling_black;
-		if (IsInCheck (piece.camp)) castling = CASTLE_NONE;
-		if ((castling & CASTLE_KINGSIDE))
-			{} //FIXME Consider kingside castling.
-		if ((castling & CASTLE_QUEENSIDE))
-			{} //FIXME Consider queenside castling.
-
-		break;
-	    }
-	case PIECE_PAWN:
-	    {
-		char dirn = (piece.camp == CAMP_WHITE) ? 1 : -1;
-		char init_rank = (piece.camp == CAMP_WHITE) ? RANK_2 : RANK_7;
-		bool one_okay = TryMovePoint (set, piece, origin, 0, dirn, MOVE_EMPTY);
-		if (one_okay && (origin.rank == init_rank))
-			TryMovePoint (set, piece, origin, 0, 2 * dirn, MOVE_EMPTY);
-		TryMovePoint (set, piece, origin, -1, dirn, MOVE_CAPTURE);
-		TryMovePoint (set, piece, origin,  1, dirn, MOVE_CAPTURE);
-		//FIXME Consider en passant capture.
-		break;
-	    }
-	default:
-		break;
-	}
-}
-
-void
-ChessBoard::TryMovePath (MoveSet& set, const Piece& piece, const Square& origin,
-	char file_dirn, char rank_dirn) const
-{
-	char file_vect = 0, rank_vect = 0;
-	while (true)
-	{
-		file_vect += file_dirn;
-		rank_vect += rank_dirn;
-
-		if (TryMovePoint (set, piece, origin,
-				file_vect, rank_vect, MOVE_CAPTURE))
-			return; // piece capture required, so can't go farther
-
-		if (!TryMovePoint (set, piece, origin,
-				file_vect, rank_vect, MOVE_EMPTY))
-			return; // something else in the way
-	}
-}
-
-bool
-ChessBoard::TryMovePoint (MoveSet& set, const Piece& piece, const Square& origin,
-	char file_vect, char rank_vect, int allowed_types) const
-{
-	Square offset ((File) file_vect, (Rank) rank_vect);
-	Square destination = origin.Offset (offset);
-	if (!destination) return false; // invalid position
-
-	MoveType type = MOVE_NONE;
-	Piece occupant = GetAt (destination);
-	if (occupant)
-	{
-		if (occupant.camp == piece.camp)
-			return false; // can't capture friendly occupant
-		else if (!(allowed_types & MOVE_CAPTURE))
-			return false; // this can't capture hostile occupant
-		else
-			type = MOVE_CAPTURE;
-	}
-	else if (!(allowed_types & MOVE_EMPTY))
-		return false; // this can't move to empty square
-	else
-		type = MOVE_EMPTY;
-
-	//FIXME Filter otherwise illegal moves. Mark castlings and en passants (and promotions?).
-
-	Move move = { origin, destination, type };
-	set.push_back (move);
-	return true;
-}
-
-
-
 /* ChessGame */
 
 cScr_ChessGame::cScr_ChessGame (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
-	  engine (NULL), play_state (STATE_ANIMATING)
+	  engine (NULL), board (NULL),
+	  SCRIPT_VAROBJ (ChessGame, fen, iHostObjId),
+	  SCRIPT_VAROBJ (ChessGame, state_data, iHostObjId),
+	  play_state (STATE_ANIMATING)
 {}
 
 long
 cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 {
-	//FIXME Handle any exceptions nicely.
-
-	engine = new ChessEngine ();
-
-	SService<IEngineSrv> pES (g_pScriptManager);
-	cScrStr book;
-	if (pES->FindFileInPath ("script_module_path", "openings.dat", book)) //FIXME This still isn't an absolute file name. Is that okay?
-		engine->SetOpeningsBook (book); //FIXME Should the book string be freed?
-	else
-		engine->SetOpeningsBook (NULL);
-
-	SService<IQuestSrv> pQS (g_pScriptManager);
-	int difficulty = pQS->Get ("difficulty");
-	engine->SetDifficulty ((ChessEngine::Difficulty) difficulty);
-
-	engine->WaitUntilReady ();
-
-	if (script_var ("ChessGame", "piece_placement", ObjId ()).Valid ())
-	{ // game in progress
-		board.Load (ObjId ());
-		char position[FEN_BUFSIZE];
-		board.EncodeFEN (position);
-		engine->StartGame (position);
-		if (board.active_camp == ChessBoard::CAMP_WHITE)
-			play_state = STATE_INTERACTIVE; //FIXME Anything else?
-		else // CAMP_BLACK
-		{
-			play_state = STATE_COMPUTING;
-			//FIXME How to proceed?
-		}
-	}
-	else // new game
+	try
 	{
-		board.Save (ObjId ());
-		engine->StartGame (NULL);
-		play_state = STATE_INTERACTIVE;
+		engine = new ChessEngine ();
+
+		SService<IEngineSrv> pES (g_pScriptManager);
+		cScrStr book;
+		//FIXME This is relative to $PWD. Is that okay?
+		if (pES->FindFileInPath ("script_module_path", "openings.dat",
+				book))
+			engine->SetOpeningsBook (book);
+		else
+			engine->SetOpeningsBook (NULL);
+
+		SService<IQuestSrv> pQS (g_pScriptManager);
+		int difficulty = pQS->Get ("difficulty");
+		engine->SetDifficulty ((ChessEngine::Difficulty) difficulty);
+
+		engine->WaitUntilReady ();
+
+		if (fen.Valid () && state_data.Valid ()) // game exists
+		{
+			board = new chess::Board (fen, state_data);
+			if (board->GetActiveSide () == chess::SIDE_WHITE)
+			{
+				play_state = STATE_INTERACTIVE;
+				//FIXME Anything else?
+			}
+			else // SIDE_BLACK
+			{
+				play_state = STATE_COMPUTING;
+				//FIXME How to proceed?
+			}
+		}
+		else // new game
+		{
+			board = new chess::Board ();
+			fen = board->GetFEN ();
+			state_data = board->GetStateData ();
+			play_state = STATE_INTERACTIVE;
+		}
+		engine->StartGame (fen);
+	}
+	catch (...)
+	{
+		throw; //FIXME Handle any exceptions nicely.
 	}
 
 	return 0;
@@ -828,6 +428,11 @@ cScr_ChessGame::OnEndScript (sScrMsg*, cMultiParm&)
 	{
 		delete engine;
 		engine = NULL;
+	}
+	if (board)
+	{
+		delete board;
+		board = NULL;
 	}
 	return 0;
 }
@@ -866,16 +471,29 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 }
 
 object
-cScr_ChessGame::GetSquare (ChessBoard::Square _square)
+cScr_ChessGame::GetSquare (const chess::Square& square)
 {
 	char square_name[9] = "Square\0\0";
-	square_name[6] = _square.file;
-	square_name[7] = _square.rank;
+	square.GetCode (square_name + 6);
 	return StrToObject (square_name);
 }
 
+chess::Square
+cScr_ChessGame::GetSquare (object square)
+{
+	chess::Square result;
+	cAnsiStr square_name = ObjectToStr (square);
+	if (square_name.GetLength () == 8 &&
+		!strncmp (square_name, "Square", 6))
+	{
+		result.file = (chess::File) tolower (square_name.GetAt (6));
+		result.rank = (chess::Rank) square_name.GetAt (7);
+	}
+	return result;
+}
+
 object
-cScr_ChessGame::GetPieceAt (ChessBoard::Square _square)
+cScr_ChessGame::GetPieceAt (const chess::Square& _square)
 {
 	object square = GetSquare (_square);
 	return square
@@ -893,19 +511,21 @@ cScr_ChessGame::AnalyzeBoard ()
 		if (pTM->ObjHasDonor (old_move.Destination (), archetype))
 			DestroyLink (old_move);
 
+	if (!board) return;
+
+	//FIXME Proceed to endgame if game is not ongoing.
+
+	//FIXME Inform of check if present.
+
 	// create new possible-move links
-	ChessBoard::MoveSet moves;
-	board.EnumerateMoves (moves);
-	for (ChessBoard::MoveSet::iterator move = moves.begin ();
-		move != moves.end (); ++move)
+	for (auto move = board->GetPossibleMoves ().begin ();
+		move != board->GetPossibleMoves ().end (); ++move)
 	{
 		object piece = GetPieceAt (move->from),
 			destination = GetSquare (move->to);
 		if (piece && destination)
 			CreateLink ("Route", piece, destination);
 	}
-
-	//FIXME Check for checks/checkmates/stalemates/etc. and react accordingly.
 }
 
 void
@@ -959,7 +579,8 @@ cScr_ChessGame::SelectMove (object destination)
 
 	if (engine)
 	{
-		ChessBoard::Square osquare (origin), dsquare (destination);
+		chess::Square osquare = GetSquare (origin);
+		chess::Square dsquare = GetSquare (destination);
 		char move[5] = "\0\0\0\0";
 		move[0] = osquare.file; move[1] = osquare.rank;
 		move[2] = dsquare.file; move[3] = dsquare.rank;
@@ -1002,15 +623,18 @@ cScr_ChessGame::FinishComputerMove ()
 void
 cScr_ChessGame::PerformMove (object piece, object origin, object destination)
 {
+	if (!board) return;
+
 	play_state = STATE_ANIMATING;
 	UpdatePieceSelection ();
 
-	board.PerformMove (origin, destination);
-	board.Save (ObjId ());
+	//FIXME board->MakeMove (origin, destination);
+	fen = board->GetFEN ();
+	state_data = board->GetStateData ();
 	AnalyzeBoard ();
 
 	//FIXME Handle en passant attack targets.
-	object occupant = GetPieceAt (destination);
+	object occupant = GetPieceAt (GetSquare (destination));
 	if (occupant)
 	{
 		DestroyLink (LinkIter (destination, occupant, "Population"));
@@ -1031,7 +655,7 @@ cScr_ChessGame::PerformMove (object piece, object origin, object destination)
 	//FIXME Handle castling and promotion.
 
 	//FIXME Delay below until after effects play.
-	if (engine && board.active_camp == ChessBoard::CAMP_BLACK)
+	if (engine && board->GetActiveSide () == chess::SIDE_BLACK)
 		BeginComputerMove ();
 	else
 	{

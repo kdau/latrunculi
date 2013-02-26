@@ -96,8 +96,10 @@ $(bindir)/BaseTrap.o: BaseTrap.h BaseScript.h Script.h
 $(bindir)/CommonScripts.o: CommonScripts.h
 
 CUSTOM_OBJS = \
+	$(bindir)/chess.o \
 	$(bindir)/custom.o
-$(bindir)/custom.o: custom.h BaseScript.h Script.h scriptvars.h utils.h
+$(bindir)/chess.o: chess.h
+$(bindir)/custom.o: custom.h chess.h BaseScript.h Script.h scriptvars.h utils.h
 
 $(bindir):
 	mkdir -p $@
