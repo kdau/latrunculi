@@ -116,19 +116,21 @@ public:
 	ChessEngine ();
 	~ChessEngine ();
 
-	void RecordMove (const char* move);
-
 	enum Difficulty
 	{
 		DIFF_EASY = 0,
 		DIFF_NORMAL,
 		DIFF_HARD
 	};
-	void SetDifficulty (Difficulty difficulty);
 
+	void SetDifficulty (Difficulty difficulty);
 	void SetOpeningsBook (const char* book_file);
 
 	void StartGame (const char* position);
+	void RecordMove (const char* move);
+
+	uint BeginCalculation ();
+	const char* EndCalculation ();
 
 	void WaitUntilReady ();
 
@@ -142,6 +144,9 @@ private:
 	uintptr_t engine_thread;
 	FILE* output_pipe;
 	FILE* input_pipe;
+
+	Difficulty difficulty;
+	char best_move[5];
 };
 #endif // !SCR_GENSCRIPTS
 
@@ -188,7 +193,9 @@ public:
 	struct Square
 	{
 		Square (File _file = FILE_NONE, Rank _rank = RANK_NONE);
+		Square (const char* position);
 		Square (object square_marker);
+
 		operator bool () const;
 		Square Offset (Square by) const;
 
@@ -204,6 +211,7 @@ public:
 		CAMP_WHITE = 'w',
 		CAMP_BLACK = 'b'
 	};
+	static Camp Enemy (Camp of);
 
 	enum PieceType
 	{
@@ -220,8 +228,10 @@ public:
 	{
 		Piece (Camp _camp = CAMP_NONE, PieceType _type = PIECE_NONE);
 		Piece (char code);
+
 		operator bool () const;
-		operator char () const;
+		char Code () const;
+
 		Camp camp;
 		PieceType type;
 	};
@@ -235,8 +245,9 @@ public:
 		CASTLE_QUEENSIDE = 2
 	};
 
-	char piece_placement[65];
-	static const char INITIAL_PLACEMENT[65];
+#define BOARD_SIZE 65
+	char piece_placement[BOARD_SIZE];
+	static const char INITIAL_PLACEMENT[BOARD_SIZE];
 
 	Camp active_camp;
 	int castling_white;
@@ -251,6 +262,8 @@ public:
 
 	Piece GetAt (const Square& square) const;
 	void SetAt (const Square& square, const Piece& piece = Piece ());
+	Square FindPiece (const Piece& piece, const Square& last = Square ())
+		const;
 
 // representations and persistence
 
@@ -262,6 +275,9 @@ public:
 
 // movement
 
+	bool IsUnderAttack (const Square& square, Camp camp) const;
+	bool IsInCheck (Camp camp) const;
+
 	// minimal validation is performed
 	void PerformMove (const Square& from, const Square& to);
 
@@ -271,7 +287,8 @@ public:
 		MOVE_EMPTY = 1,
 		MOVE_CAPTURE = 2,
 		MOVE_CASTLING = 4,
-		MOVE_EN_PASSANT = 8
+		MOVE_EN_PASSANT = 8,
+		MOVE_PROMOTION = 16
 	};
 
 	struct Move
@@ -282,14 +299,16 @@ public:
 	};
 	typedef std::vector<Move> MoveSet;
 
-	void EnumerateMoves (MoveSet& set);
+	void EnumerateMoves (MoveSet& set) const;
 
 private:
+	void EnumeratePieceMoves (MoveSet& set, const Piece& piece,
+		const Square& origin) const;
 	void TryMovePath (MoveSet& set, const Piece& piece,
-		const Square& origin, char file_dirn, char rank_dirn);
+		const Square& origin, char file_dirn, char rank_dirn) const;
 	bool TryMovePoint (MoveSet& set, const Piece& piece,
 		const Square& origin, char file_vect, char rank_vect,
-		int allowed_types = MOVE_EMPTY | MOVE_CAPTURE);
+		int allowed_types = MOVE_EMPTY | MOVE_CAPTURE) const;
 };
 #endif // !SCR_GENSCRIPTS
 
@@ -313,12 +332,14 @@ protected:
 	virtual long OnEndScript (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 
 private:
 	object GetSquare (ChessBoard::Square square);
 	object GetPieceAt (ChessBoard::Square square);
 
 	void AnalyzeBoard ();
+	void UpdatePieceSelection ();
 
 	void SelectPiece (object piece);
 	void ClearSelection ();

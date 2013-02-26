@@ -169,8 +169,11 @@ ScriptParamsIter::Matches ()
 namespace engine { void main_engine (int pipefd_a2e_0, int pipefd_e2a_1); }
 
 ChessEngine::ChessEngine ()
-	: engine_thread (0), output_pipe (NULL), input_pipe (NULL)
+	: engine_thread (0), output_pipe (NULL), input_pipe (NULL),
+	  difficulty (DIFF_NORMAL)
 {
+	memset (best_move, 0, sizeof (best_move));
+
 	HANDLE read, write;
 	int pipefd[2] = { 0 };
 
@@ -216,23 +219,10 @@ ChessEngine::~ChessEngine ()
 }
 
 void
-ChessEngine::RecordMove (const char* move)
+ChessEngine::SetDifficulty (Difficulty _difficulty)
 {
-	char move_command[ENGINE_BUFSIZE];
-	snprintf (move_command, ENGINE_BUFSIZE,
-		"position moves %s", move);
-	WriteCommand (move_command);
-}
-
-void
-ChessEngine::SetDifficulty (Difficulty difficulty)
-{
-	if (difficulty == DIFF_EASY)
-		WriteCommand ("setoption name Ponder value false");
-	else
-		WriteCommand ("setoption name Ponder value true"); //FIXME Does pondering still need to be prompted?
-
-	//FIXME Make additional difficulty-related changes.
+	difficulty = _difficulty;
+	//FIXME Set difficulty-related options.
 }
 
 void
@@ -264,6 +254,36 @@ ChessEngine::StartGame (const char* position)
 	}
 	else
 		WriteCommand ("position startpos");
+}
+
+void
+ChessEngine::RecordMove (const char* move)
+{
+	char move_command[ENGINE_BUFSIZE];
+	snprintf (move_command, ENGINE_BUFSIZE,
+		"position moves %s", move);
+	WriteCommand (move_command);
+}
+
+uint
+ChessEngine::BeginCalculation ()
+{
+	static const uint comp_time[3] = { 500, 1000, 1500 }; //FIXME Adjust.
+	static const uint depth[3] = { 1, 4, 9 }; //FIXME Adjust.
+
+	char go_command[ENGINE_BUFSIZE];
+	snprintf (go_command, ENGINE_BUFSIZE, "go depth %u movetime %u",
+		depth[difficulty], comp_time[difficulty]);
+	WriteCommand (go_command);
+	return comp_time[difficulty];
+}
+
+const char*
+ChessEngine::EndCalculation ()
+{
+	WriteCommand ("stop");
+	ReadReplies ("bestmove");
+	return best_move;
 }
 
 void
@@ -303,7 +323,9 @@ ChessEngine::ReadReply (const char* desired_reply)
 	{
 		char* move = strsep (&remainder, " \t\n");
 		if (move)
-			g_pfnMPrintf ("The chess engine suggests moving %s.\n", move); //FIXME Record move properly and notify the owning script.
+			strncpy (best_move, move, sizeof (best_move));
+		else
+			memset (best_move, 0, sizeof (best_move));
 	}
 	//FIXME Handle any other replies?
 
@@ -342,6 +364,16 @@ ChessBoard::Square::Square (File _file, Rank _rank)
 	: file (_file), rank (_rank)
 {}
 
+ChessBoard::Square::Square (const char* position)
+	: file (FILE_NONE), rank (RANK_NONE)
+{
+	if (strlen (position) >= 2)
+	{
+		file = (File) tolower (position[0]);
+		rank = (Rank) position[1];
+	}
+}
+
 ChessBoard::Square::Square (object square_marker)
 	: file (FILE_NONE), rank (RANK_NONE)
 {
@@ -350,7 +382,7 @@ ChessBoard::Square::Square (object square_marker)
 		!strncmp (square_name, "Square", 6))
 	{
 		file = (File) tolower (square_name.GetAt (6));
-		rank = (Rank) tolower (square_name.GetAt (7));
+		rank = (Rank) square_name.GetAt (7);
 	}
 }
 
@@ -374,6 +406,17 @@ ChessBoard::Square::Offset (Square by) const
 /* ChessBoard::Piece */
 
 #define BLACK_DELTA ('a' - 'A')
+
+ChessBoard::Camp
+ChessBoard::Enemy (Camp of)
+{
+	switch (of)
+	{
+		case CAMP_WHITE: return CAMP_BLACK;
+		case CAMP_BLACK: return CAMP_WHITE;
+		default: return CAMP_NONE;
+	}
+}
 
 ChessBoard::Piece::Piece (Camp _camp, PieceType _type)
 	: camp (_camp), type (_type)
@@ -404,7 +447,8 @@ ChessBoard::Piece::operator bool () const
 	return camp != CAMP_NONE && type != PIECE_NONE;
 }
 
-ChessBoard::Piece::operator char () const
+char
+ChessBoard::Piece::Code () const
 {
 	if (camp == CAMP_WHITE)
 		return type;
@@ -418,7 +462,7 @@ ChessBoard::Piece::operator char () const
 
 /* ChessBoard */
 
-const char ChessBoard::INITIAL_PLACEMENT[65] =
+const char ChessBoard::INITIAL_PLACEMENT[BOARD_SIZE] =
 	"RNBQKBNRPPPPPPPP                                pppppppprnbqkbnr";
 
 ChessBoard::ChessBoard ()
@@ -429,7 +473,7 @@ ChessBoard::ChessBoard ()
 	  halfmove_clock (0),
 	  fullmove_number (1)
 {
-	strncpy (piece_placement, INITIAL_PLACEMENT, 65);
+	strncpy (piece_placement, INITIAL_PLACEMENT, sizeof (piece_placement));
 }
 
 ChessBoard::Piece
@@ -445,7 +489,13 @@ ChessBoard::SetAt (const Square& square, const Piece& piece)
 {
 	if (!square) return;
 	piece_placement [(square.rank - RANK_1) * 8 + (square.file - FILE_a)]
-		= piece;
+		= piece.Code ();
+}
+
+ChessBoard::Square
+ChessBoard::FindPiece (const Piece& piece, const Square& last) const
+{
+	return Square (); //FIXME Find the piece.
 }
 
 void
@@ -486,19 +536,14 @@ ChessBoard::Load (object store)
 {
 	script_str _piece_placement ("ChessGame", "piece_placement", store);
 	if (_piece_placement.Valid ())
-		strncpy (piece_placement, _piece_placement, 65);
+		strncpy (piece_placement, _piece_placement, BOARD_SIZE);
 
 	load_script_int (Camp, active_camp);
 	load_script_int (int, castling_white);
 	load_script_int (int, castling_black);
 
-	script_str _eps ("ChessGame", "en_passant_square", store);
-	if (!_eps.Valid ())
-		{}
-	else if (!strcmp (_eps, "-"))
-		en_passant_square = Square ();
-	else if (strlen (_eps) == 2)
-		en_passant_square = Square ((File) _eps[0], (Rank) _eps[1]);
+	script_str eps ("ChessGame", "en_passant_square", store);
+	if (eps.Valid ()) en_passant_square = Square (eps);
 
 	load_script_int (uint, halfmove_clock);
 	load_script_int (uint, fullmove_number);
@@ -516,7 +561,7 @@ ChessBoard::Save (object store)
 	save_script_var (int, castling_white);
 	save_script_var (int, castling_black);
 
-	char eps[3] = "XX";
+	char eps[3] = "\0\0";
 	eps[0] = en_passant_square.file;
 	eps[1] = en_passant_square.rank;
 	script_str ("ChessGame", "en_passant_square", store) = eps;
@@ -527,102 +572,154 @@ ChessBoard::Save (object store)
 
 #undef save_script_var
 
+bool
+ChessBoard::IsUnderAttack (const Square& square, Camp camp) const
+{
+	ChessBoard test (*this);
+	test.active_camp = Enemy (camp);
+
+	MoveSet moves;
+	test.EnumerateMoves (moves);
+
+	//FIXME Iterate over moves and return true if any targets the square.
+	return false;
+}
+
+bool
+ChessBoard::IsInCheck (Camp camp) const
+{
+	Square square = FindPiece (Piece (camp, PIECE_KING));
+	return square ? IsUnderAttack (square, camp) : true; //FIXME How is an infinite loop avoided?
+}
+
 void
 ChessBoard::PerformMove (const Square& from, const Square& to)
 {
 	Piece mover = GetAt (from);
 	if (!mover) return;
 
-	SetAt (from);
-	SetAt (to, mover);
+	SetAt (from); // remove mover from origin
 
-	//FIXME Handle more complex move types: en passant, castling, promotion, etc.
+	//FIXME Handle promotion.
 
-	if (active_camp == CAMP_WHITE)
-		active_camp = CAMP_BLACK;
-	else
+	SetAt (to, mover); // place mover in destination
+
+	//FIXME Handle rook portion of castling.
+
+	//FIXME Handle en passant capture.
+
+	active_camp = Enemy (active_camp);
+
+	//FIXME Update en passant square.
+
+	int& castling = (mover.camp == CAMP_WHITE)
+		? castling_white : castling_black;
+	if (mover.type == PIECE_KING)
+		castling = CASTLE_NONE;
+	else if (mover.type == PIECE_ROOK && from.rank ==
+		(mover.camp == CAMP_WHITE) ? RANK_1 : RANK_8)
 	{
-		active_camp = CAMP_WHITE;
-		++fullmove_number;
+		if (from.file == FILE_a)
+			castling &= ~CASTLE_QUEENSIDE;
+		else if (from.file == FILE_h)
+			castling &= ~CASTLE_KINGSIDE;
 	}
 
-	//FIXME Update en passant, castling, and halfmove clock.
+	//FIXME Update halfmove clock.
+
+	if (mover.camp == CAMP_BLACK)
+		++fullmove_number;
 }
 
 void
-ChessBoard::EnumerateMoves (MoveSet& set)
+ChessBoard::EnumerateMoves (MoveSet& set) const
 {
 	set.clear ();
 	for (char rank = RANK_1; rank <= RANK_8; ++rank)
 	for (char file = FILE_a; file <= FILE_h; ++file)
 	{
 		Square origin ((File) file, (Rank) rank);
+		EnumeratePieceMoves (set, GetAt (origin), origin);
+	}
+}
 
-		Piece piece = GetAt (origin);
-		if (piece.camp != active_camp) continue;
+void
+ChessBoard::EnumeratePieceMoves (MoveSet& set, const Piece& piece,
+	const Square& origin) const
+{
+	if (piece.camp != active_camp) return;
 
-		switch (piece.type)
+	switch (piece.type)
+	{
+	case PIECE_ROOK:
+	case PIECE_BISHOP:
+	case PIECE_QUEEN:
+		if (piece.type != PIECE_ROOK)
 		{
-		case PIECE_ROOK:
-		case PIECE_BISHOP:
-		case PIECE_QUEEN:
-			if (piece.type != PIECE_ROOK)
-			{
-				TryMovePath (set, piece, origin,  1,  1);
-				TryMovePath (set, piece, origin, -1,  1);
-				TryMovePath (set, piece, origin,  1, -1);
-				TryMovePath (set, piece, origin, -1, -1);
-			}
-			if (piece.type != PIECE_BISHOP)
-			{
-				TryMovePath (set, piece, origin,  0,  1);
-				TryMovePath (set, piece, origin,  0, -1);
-				TryMovePath (set, piece, origin,  1,  0);
-				TryMovePath (set, piece, origin, -1,  0);
-			}
-			break;
-		case PIECE_KNIGHT:
-			TryMovePoint (set, piece, origin,  1,  2);
-			TryMovePoint (set, piece, origin,  2,  1);
-			TryMovePoint (set, piece, origin, -1,  2);
-			TryMovePoint (set, piece, origin, -2,  1);
-			TryMovePoint (set, piece, origin,  1, -2);
-			TryMovePoint (set, piece, origin,  2, -1);
-			TryMovePoint (set, piece, origin, -1, -2);
-			TryMovePoint (set, piece, origin, -2, -1);
-			break;
-		case PIECE_KING:
-			TryMovePoint (set, piece, origin,  1,  1);
-			TryMovePoint (set, piece, origin,  1,  0);
-			TryMovePoint (set, piece, origin,  1, -1);
-			TryMovePoint (set, piece, origin,  0, -1);
-			TryMovePoint (set, piece, origin, -1, -1);
-			TryMovePoint (set, piece, origin, -1,  0);
-			TryMovePoint (set, piece, origin, -1,  1);
-			TryMovePoint (set, piece, origin,  0,  1);
-			//FIXME Consider castling.
-			break;
-		case PIECE_PAWN:
-		    {
-			char dirn = (piece.camp == CAMP_WHITE) ? 1 : -1;
-			char orig_rank = (piece.camp == CAMP_WHITE) ? RANK_2 : RANK_7;
-			bool one_okay = TryMovePoint (set, piece, origin, 0, dirn, MOVE_EMPTY);
-			if (one_okay && (rank == orig_rank))
-				TryMovePoint (set, piece, origin, 0, 2 * dirn, MOVE_EMPTY);
-			TryMovePoint (set, piece, origin, -1, dirn, MOVE_CAPTURE);
-			TryMovePoint (set, piece, origin,  1, dirn, MOVE_CAPTURE);
-			//FIXME Consider en passant capture.
-			break;
-		    }
-		default:
-			break;
+			TryMovePath (set, piece, origin,  1,  1);
+			TryMovePath (set, piece, origin, -1,  1);
+			TryMovePath (set, piece, origin,  1, -1);
+			TryMovePath (set, piece, origin, -1, -1);
 		}
+		if (piece.type != PIECE_BISHOP)
+		{
+			TryMovePath (set, piece, origin,  0,  1);
+			TryMovePath (set, piece, origin,  0, -1);
+			TryMovePath (set, piece, origin,  1,  0);
+			TryMovePath (set, piece, origin, -1,  0);
+		}
+		break;
+	case PIECE_KNIGHT:
+		TryMovePoint (set, piece, origin,  1,  2);
+		TryMovePoint (set, piece, origin,  2,  1);
+		TryMovePoint (set, piece, origin, -1,  2);
+		TryMovePoint (set, piece, origin, -2,  1);
+		TryMovePoint (set, piece, origin,  1, -2);
+		TryMovePoint (set, piece, origin,  2, -1);
+		TryMovePoint (set, piece, origin, -1, -2);
+		TryMovePoint (set, piece, origin, -2, -1);
+		break;
+	case PIECE_KING:
+	    {
+		TryMovePoint (set, piece, origin,  1,  1);
+		TryMovePoint (set, piece, origin,  1,  0);
+		TryMovePoint (set, piece, origin,  1, -1);
+		TryMovePoint (set, piece, origin,  0, -1);
+		TryMovePoint (set, piece, origin, -1, -1);
+		TryMovePoint (set, piece, origin, -1,  0);
+		TryMovePoint (set, piece, origin, -1,  1);
+		TryMovePoint (set, piece, origin,  0,  1);
+
+		int castling = (piece.camp == CAMP_WHITE)
+			? castling_white : castling_black;
+		if (IsInCheck (piece.camp)) castling = CASTLE_NONE;
+		if ((castling & CASTLE_KINGSIDE))
+			{} //FIXME Consider kingside castling.
+		if ((castling & CASTLE_QUEENSIDE))
+			{} //FIXME Consider queenside castling.
+
+		break;
+	    }
+	case PIECE_PAWN:
+	    {
+		char dirn = (piece.camp == CAMP_WHITE) ? 1 : -1;
+		char init_rank = (piece.camp == CAMP_WHITE) ? RANK_2 : RANK_7;
+		bool one_okay = TryMovePoint (set, piece, origin, 0, dirn, MOVE_EMPTY);
+		if (one_okay && (origin.rank == init_rank))
+			TryMovePoint (set, piece, origin, 0, 2 * dirn, MOVE_EMPTY);
+		TryMovePoint (set, piece, origin, -1, dirn, MOVE_CAPTURE);
+		TryMovePoint (set, piece, origin,  1, dirn, MOVE_CAPTURE);
+		//FIXME Consider en passant capture.
+		break;
+	    }
+	default:
+		break;
 	}
 }
 
 void
 ChessBoard::TryMovePath (MoveSet& set, const Piece& piece, const Square& origin,
-	char file_dirn, char rank_dirn)
+	char file_dirn, char rank_dirn) const
 {
 	char file_vect = 0, rank_vect = 0;
 	while (true)
@@ -641,8 +738,8 @@ ChessBoard::TryMovePath (MoveSet& set, const Piece& piece, const Square& origin,
 }
 
 bool
-ChessBoard::TryMovePoint (MoveSet& set, const Piece& piece,
-	const Square& origin, char file_vect, char rank_vect, int allowed_types)
+ChessBoard::TryMovePoint (MoveSet& set, const Piece& piece, const Square& origin,
+	char file_vect, char rank_vect, int allowed_types) const
 {
 	Square offset ((File) file_vect, (Rank) rank_vect);
 	Square destination = origin.Offset (offset);
@@ -664,7 +761,7 @@ ChessBoard::TryMovePoint (MoveSet& set, const Piece& piece,
 	else
 		type = MOVE_EMPTY;
 
-	//FIXME Filter otherwise illegal moves. Mark castlings and en passants.
+	//FIXME Filter otherwise illegal moves. Mark castlings and en passants (and promotions?).
 
 	Move move = { origin, destination, type };
 	set.push_back (move);
@@ -740,9 +837,9 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 {
 	if (pMsg->fStarting && engine)
 	{
-		//FIXME What, if any, of this should be in BeginScript or v-v?
 		AnalyzeBoard ();
-		//FIXME Play other game-beginning stuff.
+		UpdatePieceSelection ();
+		//FIXME Play game-beginning effects.
 	}
 	return 0;
 }
@@ -759,10 +856,19 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
 
+long
+cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
+{
+	if (!strcmp (pMsg->name, "ComputerMove"))
+		FinishComputerMove ();
+
+	return cBaseScript::OnTimer (pMsg, mpReply);
+}
+
 object
 cScr_ChessGame::GetSquare (ChessBoard::Square _square)
 {
-	char square_name[9] = "SquareXX";
+	char square_name[9] = "Square\0\0";
 	square_name[6] = _square.file;
 	square_name[7] = _square.rank;
 	return StrToObject (square_name);
@@ -803,6 +909,22 @@ cScr_ChessGame::AnalyzeBoard ()
 }
 
 void
+cScr_ChessGame::UpdatePieceSelection ()
+{
+	SInterface<ITraitManager> pTM (g_pScriptManager);
+	object archetype = StrToObject ("ChessSquare");
+	for (LinkIter pieces (0, 0, "Population"); pieces; ++pieces)
+		if (pTM->ObjHasDonor (pieces.Source (), archetype))
+		{
+			object piece = pieces.Destination ();
+			bool can_move = (play_state == STATE_INTERACTIVE)
+				&& LinkIter (piece, 0, "Route");
+			SimpleSend (ObjId (), piece,
+				can_move ? "EnableMove" : "DisableMove");
+		}
+}
+
+void
 cScr_ChessGame::SelectPiece (object piece)
 {
 	if (play_state != STATE_INTERACTIVE) return;
@@ -838,7 +960,7 @@ cScr_ChessGame::SelectMove (object destination)
 	if (engine)
 	{
 		ChessBoard::Square osquare (origin), dsquare (destination);
-		char move[5] = "XXXX";
+		char move[5] = "\0\0\0\0";
 		move[0] = osquare.file; move[1] = osquare.rank;
 		move[2] = dsquare.file; move[3] = dsquare.rank;
 		engine->RecordMove (move);
@@ -850,25 +972,38 @@ cScr_ChessGame::SelectMove (object destination)
 void
 cScr_ChessGame::BeginComputerMove ()
 {
+	if (!engine) return;
+
 	play_state = STATE_COMPUTING;
-	//FIXME Disable piece selection.
-	//FIXME Start engine rolling.
+	UpdatePieceSelection ();
+
+	uint comp_time = engine->BeginCalculation ();
+	SetTimedMessage ("ComputerMove", comp_time, kSTM_OneShot);
+
 	//FIXME Play thinking effects.
-	//FIXME Set timer to finish.
 }
 
 void
 cScr_ChessGame::FinishComputerMove ()
 {
-	//FIXME Demand move from engine.
-	//FIXME Perform move.
+	if (!engine) return;
+
+	const char* move = engine->EndCalculation ();
+	object piece = GetPieceAt (move),
+		origin = GetSquare (move),
+		destination = GetSquare (move + 2);
+
+	if (!piece || !origin || !destination)
+		return; //FIXME Computer has resigned. Proceed accordingly.
+
+	PerformMove (piece, origin, destination);
 }
 
 void
 cScr_ChessGame::PerformMove (object piece, object origin, object destination)
 {
 	play_state = STATE_ANIMATING;
-	//FIXME Disable piece selection.
+	UpdatePieceSelection ();
 
 	board.PerformMove (origin, destination);
 	board.Save (ObjId ());
@@ -889,19 +1024,20 @@ cScr_ChessGame::PerformMove (object piece, object origin, object destination)
 
 	SService<IAIScrSrv> pAIS (g_pScriptManager);
 	true_bool result;
-	pAIS->MakeGotoObjLoc (result, piece, destination, kNormalSpeed,
+	pAIS->MakeGotoObjLoc (result, piece, destination, kFastSpeed,
 		kHighPriorityAction, cMultiParm::Undef);
+	//FIXME Face appropriate direction.
 
 	//FIXME Handle castling and promotion.
 
 	//FIXME Delay below until after effects play.
-	if (board.active_camp == ChessBoard::CAMP_WHITE)
-	{
-		//FIXME Enable piece selection.
-		play_state = STATE_INTERACTIVE;
-	}
-	else
+	if (engine && board.active_camp == ChessBoard::CAMP_BLACK)
 		BeginComputerMove ();
+	else
+	{
+		play_state = STATE_INTERACTIVE;
+		UpdatePieceSelection ();
+	}
 }
 
 
@@ -944,7 +1080,13 @@ cScr_ChessPiece::cScr_ChessPiece (const char* pszName, int iHostObjId)
 long
 cScr_ChessPiece::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	if (!strcmp (pMsg->message, "Select"))
+	if (!strcmp (pMsg->message, "EnableMove"))
+		AddSingleMetaProperty ("M-MovablePiece", ObjId ());
+
+	else if (!strcmp (pMsg->message, "DisableMove"))
+		RemoveSingleMetaProperty ("M-MovablePiece", ObjId ());
+
+	else if (!strcmp (pMsg->message, "Select"))
 		Select ();
 
 	else if (!strcmp (pMsg->message, "Deselect"))
