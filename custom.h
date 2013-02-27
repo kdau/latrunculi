@@ -28,6 +28,7 @@
 #if !SCR_GENSCRIPTS
 
 #include <iostream>
+#include <ext/stdio_filebuf.h>
 
 #include "BaseScript.h"
 #include "scriptvars.h"
@@ -136,15 +137,16 @@ public:
 
 private:
 	void ReadReplies (const std::string& desired_reply);
-	bool ReadReply (const std::string& desired_reply);
+	bool HasReply ();
 
 	void WriteCommand (const std::string& command);
 
 	void SetupPipe (int& read_fd, int& write_fd);
 	static void EngineThread (void* pipefd);
 
-	std::filebuf* ein_buf; std::istream* ein;
-	std::filebuf* eout_buf; std::ostream* eout;
+	typedef __gnu_cxx::stdio_filebuf<char> EngineBuf;
+	int ein_fd; EngineBuf* ein_buf; std::istream* ein;
+	int eout_fd; EngineBuf* eout_buf; std::ostream* eout;
 	uintptr_t engine_thread;
 
 	Difficulty difficulty;
@@ -191,11 +193,11 @@ private:
 
 	void PerformMove (const chess::MovePtr& move);
 
-	ChessEngine* engine;
-	chess::Board* board;
-
 	script_str fen;
 	script_int state_data;
+
+	chess::Board* board;
+	ChessEngine* engine;
 
 	enum PlayState
 	{

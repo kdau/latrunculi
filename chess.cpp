@@ -267,13 +267,13 @@ Board::Board (const std::string& fen, int state_data) //FIXME Test this thorough
 {
 	std::string::const_iterator pos = fen.begin ();
 
-	uint rank = 0, file = 0;
+	int rank = N_RANKS - 1, file = 0; // FEN is backwards rank-wise
 	while (pos != fen.end ())
 	{
 		if (file == N_FILES)
 		{
 			file = 0;
-			if (++rank == N_RANKS)
+			if (--rank == -1)
 				break;
 			else
 				fen_expect_separator ('/');
@@ -291,7 +291,7 @@ Board::Board (const std::string& fen, int state_data) //FIXME Test this thorough
 		else
 			fen_throw_invalid ("malformed piece placement");
 	}
-	if (rank != N_RANKS) fen_throw_invalid ("incomplete piece placement");
+	if (rank != -1) fen_throw_invalid ("incomplete piece placement");
 
 	fen_expect_separator (' ');
 	//FIXME Restore active side.
@@ -580,7 +580,7 @@ Board::UpdatePersistence () //FIXME Test this thoroughly.
 {
 	std::stringstream new_fen;
 
-	for (uint rank = 0; rank < N_RANKS; ++rank)
+	for (int rank = N_RANKS - 1 ; rank >= 0; --rank) // FEN is backwards
 	{
 		uint file = 0;
 		while (file < N_FILES)
@@ -593,7 +593,7 @@ Board::UpdatePersistence () //FIXME Test this thoroughly.
 			if (file < N_FILES)
 				new_fen << board[rank][file++];
 		}
-		new_fen << '/';
+		if (rank > 0 ) new_fen << '/'; // don't delimit the last one
 	}
 
 	new_fen << ' ' << SideCode (active_side);

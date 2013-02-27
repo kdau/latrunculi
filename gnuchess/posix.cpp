@@ -31,6 +31,7 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 #  include <windows.h>
+#  include <winsock2.h>
 #else // assume POSIX
 #  include <sys/resource.h>
 #  include <sys/time.h>
@@ -48,10 +49,6 @@ namespace engine {
 extern FILE *interface_input;
 extern FILE *interface_output;
 
-// constants
-
-static const bool UseDebug = false;
-
 // prototypes
 
 #if !defined(_WIN32) && !defined(_WIN64)
@@ -63,8 +60,22 @@ static double duration (const struct timeval * tv);
 // input_available()
 
 bool input_available() {
-   if (UseDebug) printf("info string interface_input->_cnt=%d\n",interface_input->_cnt);
-   return interface_input->_cnt > 0; // HACK: assumes FILE internals
+   int val;
+   fd_set set[1];
+   struct timeval time_val[1];
+
+   FD_ZERO(set);
+   FD_SET(_fileno(interface_input),set);
+
+   time_val->tv_sec = 0;
+   time_val->tv_usec = 0;
+
+   val = select(_fileno(interface_input)+1,set,NULL,NULL,time_val);
+   if (val == -1 && errno != EINTR) {
+      my_fatal("input_available(): select(): %s\n",strerror(errno));
+   }
+
+   return val > 0;
 }
 
 // now_real()

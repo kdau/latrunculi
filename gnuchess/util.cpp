@@ -49,8 +49,8 @@ extern FILE *interface_output;
 
 void util_init() {
 
-   setvbuf(interface_input,NULL,_IONBF,0);
-   setvbuf(interface_output,NULL,_IONBF,0); // _IOLBF breaks on Windows!
+   setvbuf(interface_input,NULL,_IONBF,BUFSIZ);
+   setvbuf(interface_output,NULL,_IONBF,BUFSIZ); // _IOLBF breaks on Windows!
 }
 
 // my_random_init()

@@ -20,12 +20,17 @@
 ##
 ###############################################################################
 
-.PHONY: default all clean
+MODULE_NAME = latrunculi
+GNUCHESSDIR = gnuchess
+SUBDIRS = $(GNUCHESSDIR)
+
+.PHONY: default all clean subdirs $(SUBDIRS)
 .PRECIOUS: %.o
 .INTERMEDIATE: $(bindir)/exports.o
 default: all
-
-MODULE_NAME = latrunculi
+subdirs: $(SUBDIRS)
+$(SUBDIRS):
+	$(MAKE) -C $@
 
 srcdir = .
 bindir = .
@@ -33,7 +38,6 @@ bindir = .
 LGDIR = lg
 SCRLIBDIR = ScriptLib
 DH2DIR = DH2
-GNUCHESSDIR = gnuchess
 
 PREFIX = i686-w64-mingw32-
 CC = $(PREFIX)gcc
@@ -65,11 +69,13 @@ DEFINES := $(DEFINES) -DDEBUG
 CXXFLAGS := $(CXXFLAGS) -g -O0
 LDFLAGS := $(LDFLAGS) -g
 LIBS := -lScript2-d $(LIBS) -llg-d -lgnuchess-d
+GNUCHESSLIB = $(GNUCHESSDIR)/libgnuchess-d.a
 else
 DEFINES := $(DEFINES) -DNDEBUG
 CXXFLAGS := $(CXXFLAGS) -O2
 # LDFLAGS := $(LDFLAGS)
 LIBS := -lScript2 $(LIBS) -llg -lgnuchess
+GNUCHESSLIB = $(GNUCHESSDIR)/libgnuchess.a
 endif
 
 MODULE_OBJS = \
@@ -113,10 +119,10 @@ $(bindir)/%_res.o: $(srcdir)/%.rc
 $(bindir)/exports.o: $(bindir)/ScriptModule.o
 	$(DLLTOOL) $(DLLFLAGS) --dllname $(MODULE_NAME).osm --output-exp $@ $^
 
-$(MODULE_NAME).osm: $(CUSTOM_OBJS) $(BASE_OBJS) $(MODULE_OBJS)
+$(MODULE_NAME).osm: $(CUSTOM_OBJS) $(BASE_OBJS) $(MODULE_OBJS) $(GNUCHESSLIB)
 	$(LD) $(LDFLAGS) -Wl,--image-base=0x11200000 $(LIBDIRS) -o $@ script.def $^ $(LIBS)
 
-all: $(bindir) $(MODULE_NAME).osm
+all: subdirs $(bindir) $(MODULE_NAME).osm
 
 clean:
 	$(RM) $(MODULE_NAME).osm $(bindir)/*.o

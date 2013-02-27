@@ -25,21 +25,20 @@
  *
  *****************************************************************************/
 
+#include <ctime>
 #include <sstream>
-#include <ext/stdio_filebuf.h>
+#include <system_error>
+
 #include <fcntl.h>
 #include <process.h>
+#include <winsock2.h>
+#undef GetClassName // Windows is so badly designed...
 
 #include <ScriptLib.h>
-
 #include "ScriptModule.h"
 #include "utils.h"
 
 #include "custom.h"
-
-// avoid including windows.h
-extern "C" __declspec(dllimport)
-	int __stdcall CreatePipe (HANDLE*, HANDLE*, void*, unsigned long);
 
 
 
@@ -172,20 +171,22 @@ ScriptParamsIter::Matches ()
 namespace engine { void main (int input_fd, int output_fd); }
 
 ChessEngine::ChessEngine ()
-	: ein_buf (NULL), ein (NULL),
-	  eout_buf (NULL), eout (NULL),
+	: ein_fd (0), ein_buf (NULL), ein (NULL),
+	  eout_fd (0), eout_buf (NULL), eout (NULL),
 	  engine_thread (0),
 	  difficulty (DIFF_NORMAL)
 {
-	int pipefd[2] = { 0 }, ein_fd, eout_fd;
+	int pipefd[2] = { 0 };
 
 	SetupPipe (ein_fd, pipefd[1]);
 	SetupPipe (pipefd[0], eout_fd);
 
-	ein_buf = new __gnu_cxx::stdio_filebuf<char> (ein_fd, std::ios::in);
+	FILE* ein_file = _fdopen (ein_fd, "r"); //FIXME Does this stage help?
+	ein_buf = new EngineBuf (ein_file, std::ios::in, 1);
 	ein = new std::istream (ein_buf);
 
-	eout_buf = new __gnu_cxx::stdio_filebuf<char> (ein_fd, std::ios::out);
+	FILE* eout_file = _fdopen (eout_fd, "a");
+	eout_buf = new EngineBuf (eout_file, std::ios::out, 1); //FIXME std::ios::app?
 	eout = new std::ostream (eout_buf);
 
 	engine_thread = _beginthread (EngineThread, 0, pipefd);
@@ -237,6 +238,7 @@ ChessEngine::ClearOpeningsBook ()
 void
 ChessEngine::StartGame (const chess::Board* board)
 {
+	WaitUntilReady ();
 	WriteCommand ("ucinewgame");
 	if (board)
 		WriteCommand ("position fen " + board->GetFEN ());
@@ -247,8 +249,9 @@ ChessEngine::StartGame (const chess::Board* board)
 void
 ChessEngine::RecordMove (const chess::MovePtr& move)
 {
-	if (move)
-		WriteCommand ("position moves " + move->GetUCICode ());
+	if (!move) throw std::invalid_argument ("no move specified");
+	WaitUntilReady ();
+	WriteCommand ("position moves " + move->GetUCICode ());
 }
 
 uint
@@ -258,8 +261,10 @@ ChessEngine::BeginCalculation ()
 	static const uint depth[3] = { 1, 4, 9 }; //FIXME Adjust.
 
 	std::stringstream go_command;
-	go_command << "go depth" << depth[difficulty] << " movetime "
-		<< comp_time[difficulty];
+	go_command << "go depth " << depth[difficulty]
+		<< " movetime " << comp_time[difficulty];
+
+	WaitUntilReady ();
 	WriteCommand (go_command.str ());
 
 	return comp_time[difficulty];
@@ -268,6 +273,7 @@ ChessEngine::BeginCalculation ()
 const std::string&
 ChessEngine::EndCalculation ()
 {
+	WaitUntilReady ();
 	WriteCommand ("stop");
 	ReadReplies ("bestmove");
 	return best_move;
@@ -283,55 +289,75 @@ ChessEngine::WaitUntilReady ()
 void
 ChessEngine::ReadReplies (const std::string& desired_reply)
 {
-	while (!ReadReply (desired_reply));
+	if (!ein) throw std::runtime_error ("no pipe from engine");
+	std::string last_reply;
+	uint wait_count = 0;
+
+	while (last_reply.compare (desired_reply) != 0)
+	{
+		while (!HasReply ())
+			if (++wait_count == 1000) // a second has passed
+				throw std::runtime_error
+					("engine took too long to reply");
+
+		std::string full_reply;
+		std::getline (*ein, full_reply);
+
+#ifdef DEBUG
+		g_pfnMPrintf ("ChessEngine -> %s\n", full_reply.data ());
+#endif
+
+		std::size_t pos = full_reply.find_first_of (" \t");
+		last_reply = full_reply.substr (0, pos);
+		full_reply.erase (0, pos);
+		pos = full_reply.find_first_of (" \t");
+
+		if (last_reply.compare ("id") == 0)
+		{
+			std::string field = full_reply.substr (0, pos);
+			full_reply.erase (0, pos);
+
+			if (field.compare ("name") == 0)
+				g_pfnMPrintf ("INFO: The chess engine is %s.\n",
+					full_reply.data ());
+			else if (field.compare ("author") == 0)
+				g_pfnMPrintf ("INFO: The chess engine was written by %s.\n",
+					full_reply.data ());
+		}
+
+		else if (last_reply.compare ("bestmove") == 0)
+			best_move = full_reply.substr (0, pos);
+			// ponder moves are ignored
+
+		//FIXME Handle any other reply types?
+	}
 }
 
 bool
-ChessEngine::ReadReply (const std::string& desired_reply)
+ChessEngine::HasReply ()
 {
-	if (!ein) throw std::runtime_error ("no pipe from engine");
-	std::string full_reply;
-	std::getline (*ein, full_reply);
+	fd_set set;
+	FD_ZERO (&set);
+	FD_SET (ein_fd, &set);
 
-#ifdef DEBUG
-	g_pfnMPrintf ("ChessEngine -> %s\n", full_reply.data ());
-#endif
+	timeval time_val { 0, 1000 };
 
-	std::size_t pos = full_reply.find_first_of (" \t");
-	if (pos == std::string::npos) return false;
-	std::string reply = full_reply.substr (0, pos);
-	full_reply.erase (0, pos);
-	pos = full_reply.find_first_of (" \t");
+	int val = select (ein_fd + 1, &set, NULL, NULL, &time_val);
+	if (val == -1 && errno != EINTR)
+		throw std::system_error (errno, std::system_category (),
+			"could not check for engine reply");
 
-	if (reply.compare ("id"))
-	{
-		std::string field = full_reply.substr (0, pos);
-		full_reply.erase (0, pos);
-
-		if (field.compare ("name"))
-			g_pfnMPrintf ("INFO: The chess engine is %s.\n",
-				full_reply.data ());
-		else if (field.compare ("author"))
-			g_pfnMPrintf ("INFO: The chess engine was written by %s.\n",
-				full_reply.data ());
-	}
-
-	else if (reply.compare ("bestmove"))
-		best_move = full_reply.substr (0, pos);
-
-	//FIXME Handle any other replies?
-
-	return desired_reply.compare (reply);
+	return val > 0;
 }
 
 void
 ChessEngine::WriteCommand (const std::string& command)
 {
+	if (!eout) throw std::runtime_error ("no pipe to engine");
+	*eout << command << std::endl;
 #ifdef DEBUG
 	g_pfnMPrintf ("ChessEngine <- %s\n", command.data ());
 #endif
-	if (!eout) throw std::runtime_error ("no pipe to engine");
-	*eout << command << std::endl;
 }
 
 void
@@ -360,15 +386,37 @@ ChessEngine::EngineThread (void* _pipefd)
 
 cScr_ChessGame::cScr_ChessGame (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
-	  engine (NULL), board (NULL),
 	  SCRIPT_VAROBJ (ChessGame, fen, iHostObjId),
 	  SCRIPT_VAROBJ (ChessGame, state_data, iHostObjId),
+	  board (NULL), engine (NULL),
 	  play_state (STATE_ANIMATING)
 {}
 
 long
 cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 {
+	if (fen.Valid () && state_data.Valid ()) // game exists
+	{
+		board = new chess::Board ((const char*) fen, state_data);
+		if (board->GetActiveSide () == chess::SIDE_WHITE)
+		{
+			play_state = STATE_INTERACTIVE;
+			//FIXME Anything else?
+		}
+		else // SIDE_BLACK
+		{
+			play_state = STATE_COMPUTING;
+			//FIXME How to proceed?
+		}
+	}
+	else // new game
+	{
+		board = new chess::Board ();
+		fen = board->GetFEN ().data ();
+		state_data = board->GetStateData ();
+		play_state = STATE_INTERACTIVE;
+	}
+
 	try
 	{
 		engine = new ChessEngine ();
@@ -386,34 +434,12 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 		int difficulty = pQS->Get ("difficulty");
 		engine->SetDifficulty ((ChessEngine::Difficulty) difficulty);
 
-		engine->WaitUntilReady ();
-
-		if (fen.Valid () && state_data.Valid ()) // game exists
-		{
-			board = new chess::Board
-				((const char*) fen, state_data);
-			if (board->GetActiveSide () == chess::SIDE_WHITE)
-			{
-				play_state = STATE_INTERACTIVE;
-				//FIXME Anything else?
-			}
-			else // SIDE_BLACK
-			{
-				play_state = STATE_COMPUTING;
-				//FIXME How to proceed?
-			}
-		}
-		else // new game
-		{
-			board = new chess::Board ();
-			fen = board->GetFEN ().data ();
-			state_data = board->GetStateData ();
-			play_state = STATE_INTERACTIVE;
-		}
 		engine->StartGame (board);
 	}
 	catch (...)
 	{
+		engine = NULL;
+		play_state = STATE_INTERACTIVE; // can't compute
 		throw; //FIXME Handle any exceptions nicely.
 	}
 
@@ -439,7 +465,7 @@ cScr_ChessGame::OnEndScript (sScrMsg*, cMultiParm&)
 long
 cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 {
-	if (pMsg->fStarting && engine)
+	if (pMsg->fStarting)
 	{
 		AnalyzeBoard ();
 		UpdatePieceSelection ();
@@ -481,7 +507,7 @@ cScr_ChessGame::GetSquare (object square)
 {
 	std::string square_name = (const char*) ObjectToStr (square);
 	if (square_name.length () == 8 &&
-			square_name.substr (0, 6).compare ("Square"))
+			square_name.substr (0, 6).compare ("Square") == 0)
 		return chess::Square (square_name.substr (6, 2));
 	else
 		return chess::Square ();
