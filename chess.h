@@ -23,6 +23,7 @@
 #define CHESS_H
 #if !SCR_GENSCRIPTS
 
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -46,7 +47,8 @@ enum File
 	FILE_E,
 	FILE_F,
 	FILE_G,
-	FILE_H
+	FILE_H,
+	N_FILES
 };
 
 enum Rank
@@ -59,7 +61,8 @@ enum Rank
 	RANK_5,
 	RANK_6,
 	RANK_7,
-	RANK_8
+	RANK_8,
+	N_RANKS
 };
 
 struct Square
@@ -67,7 +70,9 @@ struct Square
 	Square (File file = FILE_NONE, Rank rank = RANK_NONE);
 	Square (const char* position);
 
-	operator bool () const;
+	bool Valid () const;
+	bool operator == (const Square& rhs) const;
+
 	void GetCode (char* code) const;
 
 	Square Offset (int delta_file, int delta_rank) const;
@@ -84,15 +89,17 @@ typedef std::vector<Square> Squares;
  ** Piece (Side, PieceType, PieceSquares)
  **/
 
-#define N_SIDES 2
-
 enum Side
 {
 	SIDE_NONE = -1,
 	SIDE_WHITE,
-	SIDE_BLACK
+	SIDE_BLACK,
+	N_SIDES
 };
 
+bool SideValid (Side side);
+char SideCode (Side side);
+int SideFacing (Side side);
 Side Opponent (Side side);
 
 enum PieceType
@@ -103,7 +110,8 @@ enum PieceType
 	PIECE_ROOK,
 	PIECE_BISHOP,
 	PIECE_KNIGHT,
-	PIECE_PAWN
+	PIECE_PAWN,
+	N_PIECE_TYPES
 };
 
 struct Piece
@@ -111,15 +119,20 @@ struct Piece
 	Piece (Side side = SIDE_NONE, PieceType type = PIECE_NONE);
 	Piece (char code);
 
-	operator bool () const;
+	bool Valid () const;
+	bool operator == (const Piece& rhs) const;
 
 	char GetCode () const;
 	void SetCode (char code);
+	static const char NONE_CODE;
 
 	Rank GetInitialRank () const;
 
 	Side side;
 	PieceType type;
+
+private:
+	static const char* CODES[N_SIDES];
 };
 
 } // namespace chess
@@ -143,37 +156,44 @@ typedef std::unordered_multimap<Piece, Square> PieceSquares;
 
 
 /**
- ** Move (MoveType, Moves)
+ ** Move (MoveBase, MoveType, Moves)
  **/
+
+struct MoveBase
+{
+	Piece piece;
+	Square from;
+	Square to;
+};
 
 enum MoveType
 {
 	MOVE_NONE = 0,
-	MOVE_TO_EMPTY = 1,
-	MOVE_CAPTURE = 2,
-	MOVE_CASTLING = 4,
-	MOVE_EN_PASSANT = 8,
-	MOVE_PROMOTION = 16
+	MOVE_TO_EMPTY = 1,	// piece moving to empty square
+	MOVE_CAPTURE = 2,	// piece capturing another
+	MOVE_PROMOTION = 4,	// pawn to be promoted upon move
+	MOVE_TWO_SQUARE = 8,	// pawn moving forward two squares
+	MOVE_EN_PASSANT = 16,	// pawn capturing en passant
+	MOVE_CASTLING = 32	// king castling with rook
 };
 
-struct Move
+class Move : public MoveBase
 {
-	MoveType type;
-	Piece piece;
-	Square from;
-	Square to;
-
-	Piece captured_piece; // valid if type & MOVE_CAPTURE
-	Piece comoving_rook; // valid if type & MOVE_CASTLING
-	Square captured_at; // valid if type & MOVE_EN_PASSANT
-	PieceType promotion; // valid if type & MOVE_PROMOTION
+public:
+	uint type;
+	Piece captured_piece;	// valid for MOVE_CAPTURE
+	PieceType promotion;	// valid for MOVE_PROMOTION
+	Square passed_square;	// valid for MOVE_TWO_SQUARE or MOVE_EN_PASSANT
+	MoveBase comoving_rook;	// valid for MOVE_CASTLING
 
 private:
+	Move (const Piece& piece, const Square& from, const Square& to);
+	Move (const Move& move) = delete;
 	friend class Board;
-	Move ();
 };
 
-typedef std::vector<Move> Moves;
+typedef std::unique_ptr<Move> MovePtr;
+typedef std::vector<MovePtr> Moves;
 
 
 
@@ -181,8 +201,6 @@ typedef std::vector<Move> Moves;
  ** Board (GameState, CastlingOptions)
  **/
 
-#define N_RANKS 8
-#define N_FILES 8
 #define FEN_BUFSIZE 128
 
 enum GameState
@@ -222,6 +240,7 @@ public:
 	// constructors and persistence
 
 	Board ();
+	Board (const Board& board);
 	Board (const char* fen, int state_data);
 
 	const char* GetFEN () const;
@@ -229,11 +248,12 @@ public:
 
 	// basic data access
 
+	bool IsEmpty (const Square& square) const;
 	Piece GetPieceAt (const Square& square) const;
 	void GetSquaresWith (Squares& squares, const Piece& piece) const;
 
 	Side GetActiveSide () const;
-	CastlingOptions GetCastlingOptions (Side side) const;
+	uint GetCastlingOptions (Side side) const;
 	Square GetEnPassantSquare () const;
 	uint GetHalfmoveClock () const;
 	uint GetFullmoveNumber () const;
@@ -243,13 +263,13 @@ public:
 	GameState GetGameState () const;
 	Side GetVictor () const;
 
-	const Moves& GetPossibleMoves () const;
+	const Moves& GetPossibleMoves () const; //FIXME Do the Moves themselves really stay const?
 	bool IsUnderAttack (const Square& square, Side attacker) const;
 	bool IsInCheck (Side side) const;
 
 	// movement and player actions
 
-	bool MakeMove (const Move& move);
+	bool MakeMove (const MovePtr& move);
 	bool Resign ();
 	bool ExpireTime (Side against);
 	bool Draw (GameState draw_type);
@@ -259,8 +279,11 @@ private:
 	// persistent data and initial values
 
 	char board[N_RANKS][N_FILES];
+	char& operator[] (const Square& square);
+	const char& operator[] (const Square& square) const;
+
 	Side active_side;
-	CastlingOptions castling_options[N_SIDES];
+	uint castling_options[N_SIDES];
 	Square en_passant_square;
 	uint halfmove_clock;
 	uint fullmove_number;
@@ -268,9 +291,6 @@ private:
 	GameState game_state;
 	Side victor;
 
-	void Restore (const char* fen, int state_data);
-
-	void Reset ();
 	static const char INITIAL_BOARD[N_RANKS * N_FILES + 1];
 	static const Side INITIAL_SIDE;
 
@@ -278,14 +298,19 @@ private:
 
 	void CalculateData ();
 
-	void UpdatePersistence ();
 	char fen[FEN_BUFSIZE];
 	int state_data;
+	void UpdatePersistence ();
 
 	PieceSquares piece_squares;
 
-	void EnumerateMoves ();
 	Moves possible_moves;
+	void EnumerateMoves ();
+	void EnumerateKingMoves (const Piece& piece, const Square& from);
+	void EnumerateRangedMoves (const Piece& piece, const Square& from);
+	void EnumerateKnightMoves (const Piece& piece, const Square& from);
+	void EnumeratePawnMoves (const Piece& piece, const Square& from);
+	bool ConfirmPossibleMove (Move* move);
 
 	bool in_check[N_SIDES];
 };
@@ -293,14 +318,25 @@ private:
 inline const char* Board::GetFEN () const { return fen; }
 inline int Board::GetStateData () const { return state_data; }
 
+inline bool Board::IsEmpty (const Square& square) const
+	{ return GetPieceAt (square).Valid (); }
+inline Piece Board::GetPieceAt (const Square& square) const
+	{ return square.Valid () ? (*this)[square] : Piece::NONE_CODE; }
+
 inline Side Board::GetActiveSide () const { return active_side; }
+inline uint Board::GetCastlingOptions (Side side) const
+	{ return SideValid (side) ? castling_options[side] : uint (CASTLING_NONE); }
 inline Square Board::GetEnPassantSquare () const { return en_passant_square; }
 inline uint Board::GetHalfmoveClock () const { return halfmove_clock; }
 inline uint Board::GetFullmoveNumber () const { return fullmove_number; }
 
 inline GameState Board::GetGameState () const { return game_state; }
 inline Side Board::GetVictor () const { return victor; }
+
 inline const Moves& Board::GetPossibleMoves () const { return possible_moves; }
+
+inline bool Board::IsInCheck (Side side) const
+	{ return SideValid (side) ? in_check[side] : false; }
 
 
 

@@ -513,13 +513,19 @@ cScr_ChessGame::AnalyzeBoard ()
 
 	if (!board) return;
 
-	//FIXME Proceed to endgame if game is not ongoing.
+	chess::GameState state = board->GetGameState ();
+	if (state != chess::GAME_ONGOING)
+	{
+		//FIXME Proceed to endgame.
+	}
 
-	//FIXME Inform of check if present.
+	if (board->IsInCheck (board->GetActiveSide ()))
+	{
+		//FIXME Inform of check. (Inform for both sides?)
+	}
 
 	// create new possible-move links
-	for (auto move = board->GetPossibleMoves ().begin ();
-		move != board->GetPossibleMoves ().end (); ++move)
+	for (auto& move : board->GetPossibleMoves ())
 	{
 		object piece = GetPieceAt (move->from),
 			destination = GetSquare (move->to);
