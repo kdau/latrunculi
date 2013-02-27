@@ -24,6 +24,7 @@
 #if !SCR_GENSCRIPTS
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -34,7 +35,7 @@ namespace chess {
 
 
 /**
- ** Square (File, Rank)
+ ** Square (File, Rank, SquareColor)
  **/
 
 enum File
@@ -65,15 +66,24 @@ enum Rank
 	N_RANKS
 };
 
+enum SquareColor
+{
+	SQUARE_NONE = -1,
+	SQUARE_LIGHT,
+	SQUARE_DARK,
+	N_SQUARE_COLORS
+};
+
 struct Square
 {
 	Square (File file = FILE_NONE, Rank rank = RANK_NONE);
-	Square (const char* position);
+	Square (const std::string& code);
 
 	bool Valid () const;
 	bool operator == (const Square& rhs) const;
 
-	void GetCode (char* code) const;
+	std::string GetCode () const;
+	SquareColor GetColor () const;
 
 	Square Offset (int delta_file, int delta_rank) const;
 
@@ -132,7 +142,7 @@ struct Piece
 	PieceType type;
 
 private:
-	static const char* CODES[N_SIDES];
+	static const char CODES[N_SIDES][N_PIECE_TYPES+1];
 };
 
 } // namespace chess
@@ -156,7 +166,7 @@ typedef std::unordered_multimap<Piece, Square> PieceSquares;
 
 
 /**
- ** Move (MoveBase, MoveType, Moves)
+ ** Move (MoveBase, MoveType, MovePtr, Moves)
  **/
 
 struct MoveBase
@@ -185,6 +195,9 @@ public:
 	PieceType promotion;	// valid for MOVE_PROMOTION
 	Square passed_square;	// valid for MOVE_TWO_SQUARE or MOVE_EN_PASSANT
 	MoveBase comoving_rook;	// valid for MOVE_CASTLING
+
+	std::string GetUCICode () const;
+	Square GetCapturedSquare () const;
 
 private:
 	Move (const Piece& piece, const Square& from, const Square& to);
@@ -241,9 +254,9 @@ public:
 
 	Board ();
 	Board (const Board& board);
-	Board (const char* fen, int state_data);
+	Board (const std::string& fen, int state_data);
 
-	const char* GetFEN () const;
+	const std::string& GetFEN () const;
 	int GetStateData () const;
 
 	// basic data access
@@ -263,16 +276,16 @@ public:
 	GameState GetGameState () const;
 	Side GetVictor () const;
 
-	const Moves& GetPossibleMoves () const; //FIXME Do the Moves themselves really stay const?
+	const Moves& GetPossibleMoves () const; //FIXME This doesn't keep the Moves themselves const!
 	bool IsUnderAttack (const Square& square, Side attacker) const;
 	bool IsInCheck (Side side) const;
 
 	// movement and player actions
 
-	bool MakeMove (const MovePtr& move);
-	bool Resign ();
-	bool ExpireTime (Side against);
-	bool Draw (GameState draw_type);
+	void MakeMove (const MovePtr& move);
+	void Resign ();
+	void ExpireTime (Side against);
+	void Draw (GameState draw_type);
 
 private:
 
@@ -298,11 +311,12 @@ private:
 
 	void CalculateData ();
 
-	char fen[FEN_BUFSIZE];
+	std::string fen;
 	int state_data;
 	void UpdatePersistence ();
 
 	PieceSquares piece_squares;
+	bool IsDeadPosition () const;
 
 	Moves possible_moves;
 	void EnumerateMoves ();
@@ -315,7 +329,7 @@ private:
 	bool in_check[N_SIDES];
 };
 
-inline const char* Board::GetFEN () const { return fen; }
+inline const std::string& Board::GetFEN () const { return fen; }
 inline int Board::GetStateData () const { return state_data; }
 
 inline bool Board::IsEmpty (const Square& square) const

@@ -43,24 +43,25 @@
 
 namespace engine {
 
-// Streams used to communicate with the adapter
+// Streams used to communicate with the interface
 
-FILE *pipefd_a2e_0_stream;
-FILE *pipefd_e2a_1_stream;
+FILE *interface_input;
+FILE *interface_output;
 
 // functions
 
 // main()
 
-void main_engine(int pipefd_a2e_0, int pipefd_e2a_1) {
+void main (int input_fd, int output_fd) {
 
-   // Get reference stream of pipes to communicate with the adapter
+   // Open pipe streams to communicate with the interface
 
-   pipefd_a2e_0_stream = fdopen( pipefd_a2e_0, "r" );
-   pipefd_e2a_1_stream = fdopen( pipefd_e2a_1, "w" );
+   interface_input = fdopen (input_fd, "r");
+   interface_output = fdopen (output_fd, "w");
 
    // init
 
+   util_init();
    my_random_init(); // for opening book
 
    // early initialisation (the rest is done after UCI options are parsed in protocol.cpp)
@@ -85,8 +86,8 @@ void main_engine(int pipefd_a2e_0, int pipefd_e2a_1) {
 
    loop();
 
-   fclose (pipefd_a2e_0_stream);
-   fclose (pipefd_e2a_1_stream);
+   fclose (interface_input);
+   fclose (interface_output);
 }
 
 }  // namespace engine

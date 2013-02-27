@@ -38,10 +38,10 @@
 
 namespace engine {
 
-// Streams used for coommunication with the the adapter
+// Streams used for communication with the the interface
 
-extern FILE *pipefd_a2e_0_stream;
-extern FILE *pipefd_e2a_1_stream;
+extern FILE *interface_input;
+extern FILE *interface_output;
 
 // functions
 
@@ -49,8 +49,8 @@ extern FILE *pipefd_e2a_1_stream;
 
 void util_init() {
 
-   setvbuf(pipefd_a2e_0_stream,NULL,_IONBF,0);
-   setvbuf(pipefd_e2a_1_stream,NULL,_IONBF,0); // _IOLBF breaks on Windows!
+   setvbuf(interface_input,NULL,_IONBF,0);
+   setvbuf(interface_output,NULL,_IONBF,0); // _IOLBF breaks on Windows!
 }
 
 // my_random_init()

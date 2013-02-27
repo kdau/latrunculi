@@ -62,10 +62,10 @@ static bool Delay; // postpone "bestmove" in infinite/ponder mode?
 
 extern bool UseTrans;
 
-// Streams used for communication with the adapter
+// Streams used for communication with the interface
 
-extern FILE *pipefd_a2e_0_stream;
-extern FILE *pipefd_e2a_1_stream;
+extern FILE *interface_input;
+extern FILE *interface_output;
 
 // prototypes
 
@@ -609,7 +609,7 @@ bool get(char string[], int size) {
    ASSERT(string!=NULL);
    ASSERT(size>=65536);
 
-   return my_file_read_line(pipefd_a2e_0_stream,string,size);
+   return my_file_read_line(interface_input,string,size);
 }
 
 // send()
@@ -625,7 +625,7 @@ void send(const char format[], ...) {
    vsprintf(string,format,arg_list);
    va_end(arg_list);
 
-   fprintf(pipefd_e2a_1_stream,"%s\n",string);
+   fprintf(interface_output,"%s\n",string);
 }
 
 // string_equal()

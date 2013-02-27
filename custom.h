@@ -27,9 +27,7 @@
 
 #if !SCR_GENSCRIPTS
 
-#include <windows.h>
-#undef GetClassName // ugh
-#include <vector>
+#include <iostream>
 
 #include "BaseScript.h"
 #include "scriptvars.h"
@@ -40,7 +38,7 @@
 
 
 /**
- * Iterator: LinkIter
+ * Iterator: LinkIter //FIXME Be a real C++ iterator.
  *
  * Iterates through links that share a source, destination, and/or flavor.
  * Subclasses can further limit the set (for example, based on data) by
@@ -125,29 +123,32 @@ public:
 	};
 
 	void SetDifficulty (Difficulty difficulty);
-	void SetOpeningsBook (const char* book_file);
+	void SetOpeningsBook (const std::string& book_file);
+	void ClearOpeningsBook ();
 
-	void StartGame (const char* position);
-	void RecordMove (const char* move);
+	void StartGame (const chess::Board* board);
+	void RecordMove (const chess::MovePtr& move);
 
-	uint BeginCalculation ();
-	const char* EndCalculation ();
+	uint BeginCalculation (); // returns allotted computation time in ms
+	const std::string& EndCalculation (); // returns best computer move
 
 	void WaitUntilReady ();
 
 private:
-	bool ReadReply (const char* desired_reply = NULL);
-	void ReadReplies (const char* desired_reply = NULL);
-	void WriteCommand (const char* command);
+	void ReadReplies (const std::string& desired_reply);
+	bool ReadReply (const std::string& desired_reply);
 
+	void WriteCommand (const std::string& command);
+
+	void SetupPipe (int& read_fd, int& write_fd);
 	static void EngineThread (void* pipefd);
 
+	std::filebuf* ein_buf; std::istream* ein;
+	std::filebuf* eout_buf; std::ostream* eout;
 	uintptr_t engine_thread;
-	FILE* output_pipe;
-	FILE* input_pipe;
 
 	Difficulty difficulty;
-	char best_move[5];
+	std::string best_move;
 };
 #endif // !SCR_GENSCRIPTS
 
@@ -188,7 +189,7 @@ private:
 	void BeginComputerMove ();
 	void FinishComputerMove ();
 
-	void PerformMove (object piece, object origin, object destination);
+	void PerformMove (const chess::MovePtr& move);
 
 	ChessEngine* engine;
 	chess::Board* board;
