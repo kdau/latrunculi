@@ -108,12 +108,12 @@ private:
 /**
  * Utility Class: ChessEngine
  *
- * Manages the connection to the GNU Chess engine.
+ * Manages a connection to a UCI chess engine (customized for Fruit).
  */
 class ChessEngine
 {
 public:
-	ChessEngine ();
+	ChessEngine (const std::string& executable);
 	~ChessEngine ();
 
 	enum Difficulty
@@ -130,24 +130,25 @@ public:
 	void StartGame (const chess::Board* board);
 	void RecordMove (const chess::MovePtr& move);
 
-	uint BeginCalculation (); // returns allotted computation time in ms
-	const std::string& EndCalculation (); // returns best computer move
+	uint StartCalculation (); // returns expected calculation time in ms
+	void StopCalculation ();
+
+	const std::string& PeekBestMove () const;
+	std::string TakeBestMove ();
 
 	void WaitUntilReady ();
 
 private:
+	void LaunchEngine (const std::string& executable);
+
 	void ReadReplies (const std::string& desired_reply);
 	bool HasReply ();
 
 	void WriteCommand (const std::string& command);
 
-	void SetupPipe (int& read_fd, int& write_fd);
-	static void EngineThread (void* pipefd);
-
 	typedef __gnu_cxx::stdio_filebuf<char> EngineBuf;
-	int ein_fd; EngineBuf* ein_buf; std::istream* ein;
-	int eout_fd; EngineBuf* eout_buf; std::ostream* eout;
-	uintptr_t engine_thread;
+	EngineBuf* ein_buf; std::istream* ein; HANDLE ein_h;
+	EngineBuf* eout_buf; std::ostream* eout;
 
 	Difficulty difficulty;
 	std::string best_move;

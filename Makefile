@@ -20,17 +20,12 @@
 ##
 ###############################################################################
 
-MODULE_NAME = latrunculi
-GNUCHESSDIR = gnuchess
-SUBDIRS = $(GNUCHESSDIR)
-
-.PHONY: default all clean subdirs $(SUBDIRS)
+.PHONY: default all clean
 .PRECIOUS: %.o
 .INTERMEDIATE: $(bindir)/exports.o
 default: all
-subdirs: $(SUBDIRS)
-$(SUBDIRS):
-	$(MAKE) -C $@
+
+MODULE_NAME = latrunculi
 
 srcdir = .
 bindir = .
@@ -52,8 +47,8 @@ DEFINES = -DWINVER=0x0400 -D_WIN32_WINNT=0x0400 -DWIN32_LEAN_AND_MEAN \
 CXXDEFINES = -DMODULE_NAME=\"$(MODULE_NAME)\"
 RCDEFINES = -DMODULE_NAME=\\\"$(MODULE_NAME)\\\"
 
-INCLUDES = -I. -I$(srcdir) -I$(LGDIR) -I$(SCRLIBDIR) -I$(DH2DIR) -I$(GNUCHESSDIR)
-LIBDIRS = -L. -L$(LGDIR) -L$(SCRLIBDIR) -L$(DH2DIR) -L$(GNUCHESSDIR)
+INCLUDES = -I. -I$(srcdir) -I$(LGDIR) -I$(SCRLIBDIR) -I$(DH2DIR)
+LIBDIRS = -L. -L$(LGDIR) -L$(SCRLIBDIR) -L$(DH2DIR)
 LIBS = -ldh2 -luuid -lws2_32
 
 # If you care for this... # -Wno-unused-variable
@@ -68,14 +63,12 @@ ifdef DEBUG
 DEFINES := $(DEFINES) -DDEBUG
 CXXFLAGS := $(CXXFLAGS) -g -O0
 LDFLAGS := $(LDFLAGS) -g
-LIBS := -lScript2-d $(LIBS) -llg-d -lgnuchess-d
-GNUCHESSLIB = $(GNUCHESSDIR)/libgnuchess-d.a
+LIBS := -lScript2-d $(LIBS) -llg-d
 else
 DEFINES := $(DEFINES) -DNDEBUG
 CXXFLAGS := $(CXXFLAGS) -O2
 # LDFLAGS := $(LDFLAGS)
-LIBS := -lScript2 $(LIBS) -llg -lgnuchess
-GNUCHESSLIB = $(GNUCHESSDIR)/libgnuchess.a
+LIBS := -lScript2 $(LIBS) -llg
 endif
 
 MODULE_OBJS = \
@@ -119,10 +112,10 @@ $(bindir)/%_res.o: $(srcdir)/%.rc
 $(bindir)/exports.o: $(bindir)/ScriptModule.o
 	$(DLLTOOL) $(DLLFLAGS) --dllname $(MODULE_NAME).osm --output-exp $@ $^
 
-$(MODULE_NAME).osm: $(CUSTOM_OBJS) $(BASE_OBJS) $(MODULE_OBJS) $(GNUCHESSLIB)
+$(MODULE_NAME).osm: $(CUSTOM_OBJS) $(BASE_OBJS) $(MODULE_OBJS)
 	$(LD) $(LDFLAGS) -Wl,--image-base=0x11200000 $(LIBDIRS) -o $@ script.def $^ $(LIBS)
 
-all: subdirs $(bindir) $(MODULE_NAME).osm
+all: $(bindir) $(MODULE_NAME).osm
 
 clean:
 	$(RM) $(MODULE_NAME).osm $(bindir)/*.o

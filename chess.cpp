@@ -501,7 +501,8 @@ Board::operator[] (const Square& square) const
 
 const char
 Board::INITIAL_BOARD[N_RANKS * N_FILES + 1] =
-	"RNBQKBNRPPPPPPPP                                pppppppprnbqkbnr";
+	"RNBQKBNRPPPPPPPP\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+	"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0pppppppprnbqkbnr";
 
 const Side
 Board::INITIAL_SIDE = SIDE_WHITE;

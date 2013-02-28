@@ -7,9 +7,6 @@
  *  Adapted in part from Public Scripts
  *  Copyright (C) 2005-2011 Tom N Harris <telliamed@whoopdedo.org>
  *
- *  Adapted in part from GNU Chess 6
- *  Copyright (C) 2001-2012 Free Software Foundation, Inc.
- *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation; either version 2 of the License, or
@@ -27,12 +24,10 @@
 
 #include <ctime>
 #include <sstream>
-#include <system_error>
-
+#include <unistd.h>
 #include <fcntl.h>
-#include <process.h>
 #include <winsock2.h>
-#undef GetClassName // Windows is so badly designed...
+#undef GetClassName // ugh, Windows...
 
 #include <ScriptLib.h>
 #include "ScriptModule.h"
@@ -167,31 +162,12 @@ ScriptParamsIter::Matches ()
 
 /* ChessEngine */
 
-// prototype for main loop of GNU Chess engine
-namespace engine { void main (int input_fd, int output_fd); }
-
-ChessEngine::ChessEngine ()
-	: ein_fd (0), ein_buf (NULL), ein (NULL),
-	  eout_fd (0), eout_buf (NULL), eout (NULL),
-	  engine_thread (0),
+ChessEngine::ChessEngine (const std::string& executable)
+	: ein_buf (NULL), ein (NULL), ein_h (NULL),
+	  eout_buf (NULL), eout (NULL),
 	  difficulty (DIFF_NORMAL)
 {
-	int pipefd[2] = { 0 };
-
-	SetupPipe (ein_fd, pipefd[1]);
-	SetupPipe (pipefd[0], eout_fd);
-
-	FILE* ein_file = _fdopen (ein_fd, "r"); //FIXME Does this stage help?
-	ein_buf = new EngineBuf (ein_file, std::ios::in, 1);
-	ein = new std::istream (ein_buf);
-
-	FILE* eout_file = _fdopen (eout_fd, "a");
-	eout_buf = new EngineBuf (eout_file, std::ios::out, 1); //FIXME std::ios::app?
-	eout = new std::ostream (eout_buf);
-
-	engine_thread = _beginthread (EngineThread, 0, pipefd);
-	if (engine_thread <= 0)
-		throw std::runtime_error ("could not spawn engine thread");
+	LaunchEngine (executable);
 
 	WriteCommand ("uci");
 	ReadReplies ("uciok");
@@ -255,7 +231,7 @@ ChessEngine::RecordMove (const chess::MovePtr& move)
 }
 
 uint
-ChessEngine::BeginCalculation ()
+ChessEngine::StartCalculation ()
 {
 	static const uint comp_time[3] = { 500, 1000, 1500 }; //FIXME Adjust.
 	static const uint depth[3] = { 1, 4, 9 }; //FIXME Adjust.
@@ -270,13 +246,25 @@ ChessEngine::BeginCalculation ()
 	return comp_time[difficulty];
 }
 
-const std::string&
-ChessEngine::EndCalculation ()
+void
+ChessEngine::StopCalculation ()
 {
 	WaitUntilReady ();
 	WriteCommand ("stop");
-	ReadReplies ("bestmove");
+}
+
+const std::string&
+ChessEngine::PeekBestMove () const
+{
 	return best_move;
+}
+
+std::string
+ChessEngine::TakeBestMove ()
+{
+	std::string result = best_move;
+	best_move.clear ();
+	return result;
 }
 
 void
@@ -284,6 +272,67 @@ ChessEngine::WaitUntilReady ()
 {
 	WriteCommand ("isready");
 	ReadReplies ("readyok");
+}
+
+void
+ChessEngine::LaunchEngine (const std::string& executable)
+{
+#define lnchstep(x) if (!(x)) goto launch_problem
+
+	HANDLE engine_stdin_r, engine_stdin_w,
+		engine_stdout_r, engine_stdout_w;
+	int eout_fd, ein_fd;
+	FILE *eout_file, *ein_file;
+
+	SECURITY_ATTRIBUTES attrs;
+	attrs.nLength = sizeof (SECURITY_ATTRIBUTES);
+	attrs.bInheritHandle = true;
+	attrs.lpSecurityDescriptor = NULL;
+
+	lnchstep (CreatePipe (&engine_stdin_r, &engine_stdin_w, &attrs, 0));
+	lnchstep (SetHandleInformation (engine_stdin_w, HANDLE_FLAG_INHERIT, 0));
+	eout_fd = _open_osfhandle ((intptr_t) engine_stdin_w, _O_APPEND);
+	lnchstep (eout_fd != -1);
+	eout_file = _fdopen (eout_fd, "w");
+	lnchstep (eout_file != NULL);
+	eout_buf = new EngineBuf (eout_file, std::ios::out, 1);
+	eout = new std::ostream (eout_buf);
+
+	lnchstep (CreatePipe (&engine_stdout_r, &engine_stdout_w, &attrs, 0));
+	lnchstep (SetHandleInformation (engine_stdout_r, HANDLE_FLAG_INHERIT, 0));
+	ein_fd = _open_osfhandle ((intptr_t) engine_stdout_r, _O_RDONLY);
+	lnchstep (ein_fd != -1);
+	ein_file = _fdopen (ein_fd, "r");
+	lnchstep (ein_file != NULL);
+	ein_buf = new EngineBuf (ein_file, std::ios::in, 1);
+	ein = new std::istream (ein_buf);
+	ein_h = engine_stdout_r;
+
+	STARTUPINFO start_info;
+	ZeroMemory (&start_info, sizeof (STARTUPINFO));
+	start_info.cb = sizeof (STARTUPINFO);
+	start_info.hStdError = engine_stdout_w;
+	start_info.hStdOutput = engine_stdout_w;
+	start_info.hStdInput = engine_stdin_r;
+	start_info.dwFlags |= STARTF_USESTDHANDLES;
+
+	PROCESS_INFORMATION proc_info;
+	ZeroMemory (&proc_info, sizeof (PROCESS_INFORMATION));
+
+	lnchstep (CreateProcess (executable.data (), NULL, NULL, NULL, true,
+		0, NULL, NULL, &start_info, &proc_info));
+
+	CloseHandle (proc_info.hProcess);
+	CloseHandle (proc_info.hThread);
+
+#ifdef DEBUG
+	g_pfnMPrintf ("ChessEngine == %s\n", executable.data ());
+#endif
+
+	return;
+#undef lnchstep
+launch_problem:
+	throw std::runtime_error ("could not launch chess engine");
 }
 
 void
@@ -296,12 +345,18 @@ ChessEngine::ReadReplies (const std::string& desired_reply)
 	while (last_reply.compare (desired_reply) != 0)
 	{
 		while (!HasReply ())
-			if (++wait_count == 1000) // a second has passed
+			if (wait_count++ < 250)
+				usleep (1000);
+			else // time out after 250ms
 				throw std::runtime_error
 					("engine took too long to reply");
 
 		std::string full_reply;
 		std::getline (*ein, full_reply);
+		if (full_reply.empty ())
+			continue;
+		if (full_reply.back () == '\r')
+			full_reply.erase (full_reply.size () - 1, 1);
 
 #ifdef DEBUG
 		g_pfnMPrintf ("ChessEngine -> %s\n", full_reply.data ());
@@ -336,16 +391,11 @@ ChessEngine::ReadReplies (const std::string& desired_reply)
 bool
 ChessEngine::HasReply ()
 {
-	fd_set set;
-	FD_ZERO (&set);
-	FD_SET (ein_fd, &set);
+	if (!ein) throw std::runtime_error ("no pipe from engine");
 
-	timeval time_val { 0, 1000 };
-
-	int val = select (ein_fd + 1, &set, NULL, NULL, &time_val);
-	if (val == -1 && errno != EINTR)
-		throw std::system_error (errno, std::system_category (),
-			"could not check for engine reply");
+	DWORD val;
+	if (!PeekNamedPipe (ein_h, NULL, 0, NULL, &val, NULL))
+		throw std::runtime_error ("could not check for engine reply");
 
 	return val > 0;
 }
@@ -358,26 +408,6 @@ ChessEngine::WriteCommand (const std::string& command)
 #ifdef DEBUG
 	g_pfnMPrintf ("ChessEngine <- %s\n", command.data ());
 #endif
-}
-
-void
-ChessEngine::SetupPipe (int& read_fd, int& write_fd)
-{
-	HANDLE read, write;
-	if (!CreatePipe (&read, &write, NULL, 0))
-		throw std::runtime_error ("could not create pipe");
-
-	read_fd = _open_osfhandle ((intptr_t) read, _O_RDONLY);
-	write_fd = _open_osfhandle ((intptr_t) write, _O_APPEND);
-	if (read_fd == -1 || write_fd == -1)
-		throw std::runtime_error ("could not open pipe");
-}
-
-void
-ChessEngine::EngineThread (void* _pipefd)
-{
-	int* pipefd = reinterpret_cast<int*> (_pipefd);
-	engine::main (pipefd[0], pipefd[1]);
 }
 
 
@@ -419,28 +449,31 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 
 	try
 	{
-		engine = new ChessEngine ();
-
 		SService<IEngineSrv> pES (g_pScriptManager);
-		cScrStr book;
-		//FIXME This is relative to $PWD. Is that okay?
-		if (pES->FindFileInPath ("script_module_path", "openings.dat",
-				book))
-			engine->SetOpeningsBook ((const char*) book);
+		cScrStr path;
+
+		if (!pES->FindFileInPath ("script_module_path", "fruit.exe", path))
+			throw std::runtime_error ("could not find chess engine");
+		engine = new ChessEngine ((const char*) path);
+
+		if (pES->FindFileInPath ("script_module_path", "openings.dat", path))
+			engine->SetOpeningsBook ((const char*) path); //FIXME Confirm that the book actually gets loaded.
 		else
 			engine->SetOpeningsBook (NULL);
 
 		SService<IQuestSrv> pQS (g_pScriptManager);
-		int difficulty = pQS->Get ("difficulty");
-		engine->SetDifficulty ((ChessEngine::Difficulty) difficulty);
+		engine->SetDifficulty
+			((ChessEngine::Difficulty) pQS->Get ("difficulty"));
 
 		engine->StartGame (board);
+
+		SetTimedMessage ("EngineCheck", 250, kSTM_Periodic);
 	}
 	catch (...)
 	{
 		engine = NULL;
 		play_state = STATE_INTERACTIVE; // can't compute
-		throw; //FIXME Handle any exceptions nicely.
+		throw; //FIXME Announce that this will be a two-human-player game.
 	}
 
 	return 0;
@@ -489,8 +522,25 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 long
 cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 {
-	if (!strcmp (pMsg->name, "ComputerMove"))
-		FinishComputerMove ();
+	try
+	{
+		bool stop_calc = !strcmp (pMsg->name, "StopCalculation");
+		if (engine && stop_calc)
+			engine->StopCalculation ();
+
+		if (engine && (stop_calc || !strcmp (pMsg->name, "EngineCheck")))
+		{
+			engine->WaitUntilReady ();
+			if (play_state == STATE_COMPUTING)
+				FinishComputerMove ();
+		}
+	}
+	catch (...)
+	{
+		try { delete engine; } catch (...) {}
+		engine = NULL;
+		//FIXME Engine's dead; how to proceed from here?
+	}
 
 	return cBaseScript::OnTimer (pMsg, mpReply);
 }
@@ -607,6 +657,7 @@ cScr_ChessGame::SelectMove (object destination)
 	chess::MovePtr move;
 	//FIXME Look up the chess::Move by the origin and destination.
 
+	//FIXME Catch and handle exceptions.
 	if (engine)
 		engine->RecordMove (move);
 
@@ -616,13 +667,16 @@ cScr_ChessGame::SelectMove (object destination)
 void
 cScr_ChessGame::BeginComputerMove ()
 {
+	//FIXME Don't fail silently. Catch and handle exceptions.
 	if (!engine) return;
 
 	play_state = STATE_COMPUTING;
 	UpdatePieceSelection ();
 
-	uint comp_time = engine->BeginCalculation ();
-	SetTimedMessage ("ComputerMove", comp_time, kSTM_OneShot);
+	uint comp_time = engine->StartCalculation ();
+
+	// schedule a special extra check of the engine
+	SetTimedMessage ("StopCalculation", comp_time, kSTM_OneShot);
 
 	//FIXME Play thinking effects.
 }
@@ -630,13 +684,14 @@ cScr_ChessGame::BeginComputerMove ()
 void
 cScr_ChessGame::FinishComputerMove ()
 {
-	if (!engine) return;
+	if (play_state != STATE_COMPUTING || !engine ||
+			engine->PeekBestMove ().empty ())
+		return;
 
-	std::string move_code = engine->EndCalculation ();
+	std::string move_code = engine->TakeBestMove ();
 
 	chess::MovePtr move;
 	//FIXME Look up the chess::Move by its code.
-
 	//FIXME Identify computer resignation and proceed accordingly.
 
 	PerformMove (move);
@@ -645,7 +700,7 @@ cScr_ChessGame::FinishComputerMove ()
 void
 cScr_ChessGame::PerformMove (const chess::MovePtr& move)
 {
-	if (!board || !move) return;
+	if (!board || !move) return; //FIXME Do more?
 
 	play_state = STATE_ANIMATING;
 	UpdatePieceSelection ();
@@ -679,9 +734,20 @@ cScr_ChessGame::PerformMove (const chess::MovePtr& move)
 	true_bool result;
 	pAIS->MakeGotoObjLoc (result, piece, to, kFastSpeed,
 		kHighPriorityAction, cMultiParm::Undef);
-	//FIXME Face appropriate direction.
+	//FIXME Face appropriate direction per move->piece.GetFacing ().
 
-	//FIXME Handle castling and promotion.
+	if (move->type & chess::MOVE_CASTLING)
+	{
+		object rook = GetPieceAt (move->comoving_rook.from),
+			rook_from = GetSquare (move->comoving_rook.from),
+			rook_to = GetSquare (move->comoving_rook.to);
+		//FIXME Update and move the rook. Special effect?
+	}
+
+	if (move->type & chess::MOVE_PROMOTION)
+	{
+		//FIXME Replace the piece when it arrives, with special effect.
+	}
 
 	//FIXME Delay below until after effects play.
 	if (engine && board->GetActiveSide () == chess::SIDE_BLACK)

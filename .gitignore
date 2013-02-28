@@ -2,7 +2,5 @@ originals
 DH2
 ScriptLib
 lg
-gnuchess/libgnuchess.a
-gnuchess/libgnuchess-d.a
 latrunculi.osm
 *.o
