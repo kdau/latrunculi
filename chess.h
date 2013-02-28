@@ -175,49 +175,150 @@ typedef std::unordered_multimap<Piece, Square> PieceSquares;
 
 
 /**
- ** Move
+ ** Move (Resignation, Movement, PieceMove, Capture, EnPassantCapture,
+ **       TwoSquarePawnMove, Castling)
  **/
 
-struct MoveBase
+//FIXME Write copying and comparison solutions for the Move family.
+
+class Move
+{
+public:
+	virtual ~Move () {}
+
+	bool Valid () const { return valid; }
+
+	virtual Side GetSide () const = 0;
+
+	virtual std::string GetUCICode () const = 0;
+	virtual std::string GetDescription () const = 0;
+
+protected:
+	Move () : valid (true) {}
+	void Invalidate () { valid = false; }
+
+private:
+	bool valid;
+};
+typedef std::unique_ptr<Move> MovePtr;
+typedef std::vector<MovePtr> Moves;
+
+class Resignation : public Move
+{
+public:
+	Resignation (Side _side) : side (_side) {}
+
+	virtual Side GetSide () const { return side; }
+
+	virtual std::string GetUCICode () const;
+	virtual std::string GetDescription () const;
+
+private:
+	Side side;
+};
+
+//FIXME What about time control and draws?
+
+struct Movement
 {
 	Piece piece;
 	Square from;
 	Square to;
 };
 
-enum MoveType
-{
-	MOVE_NONE = 0,
-	MOVE_TO_EMPTY = 1,	// piece moving to empty square
-	MOVE_CAPTURE = 2,	// piece capturing another
-	MOVE_PROMOTION = 4,	// pawn to be promoted upon move
-	MOVE_TWO_SQUARE = 8,	// pawn moving forward two squares
-	MOVE_EN_PASSANT = 16,	// pawn capturing en passant
-	MOVE_CASTLING = 32	// king castling with rook
-};
-
-class Move : public MoveBase
+class PieceMove : public Move, private Movement
 {
 public:
-	uint type;
-	Piece captured_piece;	// valid for MOVE_CAPTURE
-	PieceType promotion;	// valid for MOVE_PROMOTION
-	Square passed_square;	// valid for MOVE_TWO_SQUARE or MOVE_EN_PASSANT
-	MoveBase comoving_rook;	// valid for MOVE_CASTLING
+	PieceMove (const Piece& piece, const Square& from, const Square& to);
 
-	Square GetCapturedSquare () const;
+	Piece GetPiece () const { return piece; }
+	Square GetFrom () const { return from; }
+	Square GetTo () const { return to; }
 
-	std::string GetUCICode () const;
-	std::string GetDescription () const;
+	virtual Side GetSide () const { return piece.side; }
+
+	virtual std::string GetUCICode () const;
+	virtual std::string GetDescription () const;
+
+	//FIXME What about promotions? They can also be Captures (but not EPCs or TSPMs).
 
 private:
-	Move (const Piece& piece, const Square& from, const Square& to);
-	Move (const Move& move) = delete;
-	friend class Board;
+	Piece piece;
+	Square from;
+	Square to;
 };
 
-typedef std::unique_ptr<Move> MovePtr;
-typedef std::vector<MovePtr> Moves;
+class Capture : public PieceMove
+{
+public:
+	Capture (const Piece& piece, const Square& from,
+		const Square& to, const Piece& captured_piece);
+
+	const Piece& GetCapturedPiece () const { return captured_piece; }
+	virtual Square GetCapturedSquare () const { return GetTo (); }
+
+	// no special UCI code
+	virtual std::string GetDescription () const;
+
+private:
+	Piece captured_piece;
+};
+
+class EnPassantCapture : public Capture
+{
+public:
+	EnPassantCapture (Side side, File from, File to);
+
+	virtual Square GetCapturedSquare () const { return captured_square; }
+
+	// no special UCI code
+	virtual std::string GetDescription () const;
+
+private:
+	Square captured_square;
+};
+
+class TwoSquarePawnMove : public PieceMove
+{
+public:
+	TwoSquarePawnMove (Side side, File file);
+
+	const Square& GetPassedSquare () const { return passed_square; }
+
+	// no special UCI code or description
+
+private:
+	Square passed_square;
+};
+
+class Castling : public PieceMove
+{
+public:
+	enum Type
+	{
+		NONE = 0,
+		KINGSIDE = 1,
+		QUEENSIDE = 2,
+		BOTH = KINGSIDE | QUEENSIDE
+	};
+
+	Castling (Side side, Type type);
+
+	Type GetCastlingType () const { return type; }
+
+	Piece GetRookPiece () const { return rook_piece; }
+	Square GetRookFrom () const { return rook_from; }
+	Square GetRookTo () const { return rook_to; }
+
+	// no special UCI code
+	virtual std::string GetDescription () const;
+
+private:
+	Type type;
+	Piece rook_piece;
+	Square rook_from;
+	Square rook_to;
+};
 
 
 
@@ -247,14 +348,6 @@ enum GameState
 
 	// set manually by Draw() only if conditions are present
 	GAME_DRAWN_FIFTY_MOVE
-};
-
-enum CastlingOptions
-{
-	CASTLING_NONE = 0,
-	CASTLING_KINGSIDE = 1,
-	CASTLING_QUEENSIDE = 2,
-	CASTLING_ALL = CASTLING_KINGSIDE | CASTLING_QUEENSIDE
 };
 
 class Board
@@ -295,12 +388,14 @@ public:
 
 	// movement and player actions
 
-	void MakeMove (const Move& move);
+	void MakeMove (const PieceMove& move);
 	void Resign ();
 	void ExpireTime (Side against);
 	void Draw (GameState draw_type);
 
 private:
+
+	void EndGame (GameState result, Side victor);
 
 	// persistent data and initial values
 
@@ -337,7 +432,7 @@ private:
 	void EnumerateRangedMoves (const Piece& piece, const Square& from);
 	void EnumerateKnightMoves (const Piece& piece, const Square& from);
 	void EnumeratePawnMoves (const Piece& piece, const Square& from);
-	bool ConfirmPossibleMove (Move& move);
+	bool ConfirmPossibleMove (PieceMove& move);
 
 	bool in_check[N_SIDES];
 };
@@ -352,7 +447,7 @@ inline Piece Board::GetPieceAt (const Square& square) const
 
 inline Side Board::GetActiveSide () const { return active_side; }
 inline uint Board::GetCastlingOptions (Side side) const
-	{ return SideValid (side) ? castling_options[side] : uint (CASTLING_NONE); }
+	{ return SideValid (side) ? castling_options[side] : uint (Castling::NONE); }
 inline Square Board::GetEnPassantSquare () const { return en_passant_square; }
 inline uint Board::GetFiftyMoveClock () const { return fifty_move_clock; }
 inline uint Board::GetFullmoveNumber () const { return fullmove_number; }

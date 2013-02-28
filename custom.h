@@ -193,7 +193,7 @@ private:
 	void BeginComputerMove ();
 	void FinishComputerMove ();
 
-	void PerformMove (const chess::Move& move);
+	void PerformMove (const chess::PieceMove& move);
 
 	void ShowLogbook ();
 

@@ -640,12 +640,13 @@ cScr_ChessGame::AnalyzeBoard ()
 
 	// create new possible-move links
 	for (auto& move : board->GetPossibleMoves ())
-	{
-		object piece = GetPieceAt (move->from),
-			destination = GetSquare (move->to);
-		if (piece && destination)
-			CreateLink ("Route", piece, destination);
-	}
+		if (auto pmove = dynamic_cast<chess::PieceMove*> (&*move))
+		{
+			object piece = GetPieceAt (pmove->GetFrom ()),
+				destination = GetSquare (pmove->GetTo ());
+			if (piece && destination)
+				CreateLink ("Route", piece, destination);
+		}
 }
 
 void
@@ -697,8 +698,8 @@ cScr_ChessGame::SelectMove (object destination)
 
 	ClearSelection ();
 
-	chess::MovePtr move;
-	//FIXME Look up the chess::Move by the origin and destination.
+	chess::PieceMove* move = NULL;
+	//FIXME Look up the move by the origin and destination.
 	if (!move) return; //FIXME More?
 
 	//FIXME Catch and handle exceptions.
@@ -735,17 +736,18 @@ cScr_ChessGame::FinishComputerMove ()
 	std::string move_code = engine->TakeBestMove ();
 	//FIXME Identify computer resignation and proceed accordingly.
 
-	chess::MovePtr move;
-	//FIXME Look up the chess::Move by its code.
+	chess::PieceMove* move = NULL;
+	//FIXME Look up the move by its code.
 	if (!move) return; //FIXME More?
 
 	PerformMove (*move);
 }
 
 void
-cScr_ChessGame::PerformMove (const chess::Move& move)
+cScr_ChessGame::PerformMove (const chess::PieceMove& move)
 {
 	if (!board) return;
+	//FIXME Handle non-PieceMoves somewhere.
 
 	play_state = STATE_ANIMATING;
 	UpdatePieceSelection ();
@@ -756,27 +758,31 @@ cScr_ChessGame::PerformMove (const chess::Move& move)
 	_log_text << move.GetDescription () << std::endl;
 	log_text = _log_text.str ().data ();
 
-	board->MakeMove (move);
+	board->MakeMove (move); //FIXME handle exceptions
 	fen = board->GetFEN ().data ();
 	state_data = board->GetStateData ();
 
 	AnalyzeBoard ();
 
-	object piece = GetPieceAt (move.from),
-		from = GetSquare (move.from),
-		to = GetSquare (move.to);
+	object piece = GetPieceAt (move.GetFrom ()),
+		from = GetSquare (move.GetFrom ()),
+		to = GetSquare (move.GetTo ());
+	if (!piece || !from || !to) return; //FIXME !?!?!?
 
-	if (!piece || !from || !to) return; // !?!?!?
-
-	if (move.type & chess::MOVE_CAPTURE)
+	if (auto capture = dynamic_cast<const chess::Capture*> (&move))
 	{
-		object captured = GetPieceAt (move.GetCapturedSquare ());
-		if (!captured) return; // !?!?!?
+		object captured =
+			GetPieceAt (capture->GetCapturedSquare ());
+		if (!captured) return; //FIXME !?!?!?
+
 		for (LinkIter pop (0, captured, "Population"); pop; ++pop)
 			DestroyLink (pop);
+
 		//FIXME Have piece attack captured. Delay below until after.
+
 		SService<IActReactSrv> pARS (g_pScriptManager);
-		pARS->ARStimulate (captured, StrToObject ("FireStim"), 100.0, piece);
+		pARS->ARStimulate (captured,
+			StrToObject ("FireStim"), 100.0, piece);
 	}
 
 	DestroyLink (LinkIter (from, piece, "Population"));
@@ -786,17 +792,17 @@ cScr_ChessGame::PerformMove (const chess::Move& move)
 	true_bool result;
 	pAIS->MakeGotoObjLoc (result, piece, to, kFastSpeed,
 		kHighPriorityAction, cMultiParm::Undef);
-	//FIXME Face appropriate direction per move.piece.GetFacing ().
+	//FIXME Face appropriate direction per piece.GetFacing ().
 
-	if (move.type & chess::MOVE_CASTLING)
+	if (auto castling = dynamic_cast<const chess::Castling*> (&move))
 	{
-		object rook = GetPieceAt (move.comoving_rook.from),
-			rook_from = GetSquare (move.comoving_rook.from),
-			rook_to = GetSquare (move.comoving_rook.to);
+		object rook = GetPieceAt (castling->GetRookFrom ()),
+			rook_from = GetSquare (castling->GetRookFrom ()),
+			rook_to = GetSquare (castling->GetRookTo ());
 		//FIXME Update and move the rook. Special effect?
 	}
 
-	if (move.type & chess::MOVE_PROMOTION)
+	if (false) //FIXME identify promotion
 	{
 		//FIXME Replace the piece when it arrives, with special effect.
 	}
