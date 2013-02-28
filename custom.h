@@ -128,7 +128,7 @@ public:
 	void ClearOpeningsBook ();
 
 	void StartGame (const chess::Board* board);
-	void RecordMove (const chess::MovePtr& move);
+	void RecordMove (const chess::Move& move);
 
 	uint StartCalculation (); // returns expected calculation time in ms
 	void StopCalculation ();
@@ -176,6 +176,7 @@ protected:
 	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
 
 private:
 	object GetSquare (const chess::Square& square);
@@ -192,10 +193,13 @@ private:
 	void BeginComputerMove ();
 	void FinishComputerMove ();
 
-	void PerformMove (const chess::MovePtr& move);
+	void PerformMove (const chess::Move& move);
+
+	void ShowLogbook ();
 
 	script_str fen;
 	script_int state_data;
+	script_str log_text;
 
 	chess::Board* board;
 	ChessEngine* engine;

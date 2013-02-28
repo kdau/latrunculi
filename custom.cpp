@@ -37,6 +37,26 @@
 
 
 
+/* translation for chess module */
+
+namespace chess {
+
+std::string
+Translate (const std::string& msgid)
+{
+	SService<IDataSrv> pDS (g_pScriptManager);
+	cScrStr buffer;
+	pDS->GetString (buffer, "chess", msgid.data (), "", "strings");
+	std::string result = (const char*) buffer;
+	buffer.Free ();
+	return result;
+
+}
+
+} // namespace chess
+
+
+
 /* LinkIter */
 
 LinkIter::LinkIter (object source, object dest, const char* flavor)
@@ -223,11 +243,10 @@ ChessEngine::StartGame (const chess::Board* board)
 }
 
 void
-ChessEngine::RecordMove (const chess::MovePtr& move)
+ChessEngine::RecordMove (const chess::Move& move)
 {
-	if (!move) throw std::invalid_argument ("no move specified");
 	WaitUntilReady ();
-	WriteCommand ("position moves " + move->GetUCICode ());
+	WriteCommand ("position moves " + move.GetUCICode ());
 }
 
 uint
@@ -359,7 +378,8 @@ ChessEngine::ReadReplies (const std::string& desired_reply)
 			full_reply.erase (full_reply.size () - 1, 1);
 
 #ifdef DEBUG
-		g_pfnMPrintf ("ChessEngine -> %s\n", full_reply.data ());
+		if (full_reply.compare ("readyok") != 0)
+			g_pfnMPrintf ("ChessEngine -> %s\n", full_reply.data ());
 #endif
 
 		std::size_t pos = full_reply.find_first_of (" \t");
@@ -406,7 +426,8 @@ ChessEngine::WriteCommand (const std::string& command)
 	if (!eout) throw std::runtime_error ("no pipe to engine");
 	*eout << command << std::endl;
 #ifdef DEBUG
-	g_pfnMPrintf ("ChessEngine <- %s\n", command.data ());
+	if (command.compare ("isready") != 0)
+		g_pfnMPrintf ("ChessEngine <- %s\n", command.data ());
 #endif
 }
 
@@ -418,6 +439,7 @@ cScr_ChessGame::cScr_ChessGame (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
 	  SCRIPT_VAROBJ (ChessGame, fen, iHostObjId),
 	  SCRIPT_VAROBJ (ChessGame, state_data, iHostObjId),
+	  SCRIPT_VAROBJ (ChessGame, log_text, iHostObjId),
 	  board (NULL), engine (NULL),
 	  play_state (STATE_ANIMATING)
 {}
@@ -436,7 +458,7 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 		else // SIDE_BLACK
 		{
 			play_state = STATE_COMPUTING;
-			//FIXME How to proceed?
+			SetTimedMessage ("BeginComputing", 10, kSTM_OneShot);
 		}
 	}
 	else // new game
@@ -446,6 +468,8 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 		state_data = board->GetStateData ();
 		play_state = STATE_INTERACTIVE;
 	}
+
+	log_text.Init (chess::Translate ("log_heading").data ());
 
 	try
 	{
@@ -473,7 +497,7 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 	{
 		engine = NULL;
 		play_state = STATE_INTERACTIVE; // can't compute
-		throw; //FIXME Announce that this will be a two-human-player game.
+		SetTimedMessage ("EngineFailure", 10, kSTM_OneShot);
 	}
 
 	return 0;
@@ -520,26 +544,45 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 }
 
 long
+cScr_ChessGame::OnTurnOn (sScrMsg* pMsg, cMultiParm&)
+{
+	if (!strcmp ((const char*) ObjectToStr (pMsg->from), "TheLogbook"))
+		ShowLogbook ();
+	return 0;
+}
+
+long
 cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 {
-	try
-	{
-		bool stop_calc = !strcmp (pMsg->name, "StopCalculation");
-		if (engine && stop_calc)
-			engine->StopCalculation ();
-
-		if (engine && (stop_calc || !strcmp (pMsg->name, "EngineCheck")))
+	if (engine)
+		try
 		{
-			engine->WaitUntilReady ();
-			if (play_state == STATE_COMPUTING)
-				FinishComputerMove ();
+			if (!strcmp (pMsg->name, "BeginComputing"))
+				BeginComputerMove ();
+
+			bool stop_calc = !strcmp (pMsg->name, "StopCalculation");
+			if (stop_calc)
+				engine->StopCalculation ();
+
+			if (stop_calc || !strcmp (pMsg->name, "EngineCheck"))
+			{
+				engine->WaitUntilReady ();
+				if (play_state == STATE_COMPUTING)
+					FinishComputerMove ();
+			}
 		}
-	}
-	catch (...)
+		catch (...)
+		{
+			try { delete engine; } catch (...) {}
+			engine = NULL;
+			//FIXME Engine's suddenly dead. How to proceed from here? Blackbrook resigns?
+		}
+
+	if (!strcmp (pMsg->name, "EngineFailure"))
 	{
-		try { delete engine; } catch (...) {}
-		engine = NULL;
-		//FIXME Engine's dead; how to proceed from here?
+		// inform the player that both sides will be interactive
+		SService<IDarkUISrv> pDUIS (g_pScriptManager);
+		pDUIS->ReadBook ("engine-problem", "parch");
 	}
 
 	return cBaseScript::OnTimer (pMsg, mpReply);
@@ -656,12 +699,13 @@ cScr_ChessGame::SelectMove (object destination)
 
 	chess::MovePtr move;
 	//FIXME Look up the chess::Move by the origin and destination.
+	if (!move) return; //FIXME More?
 
 	//FIXME Catch and handle exceptions.
 	if (engine)
-		engine->RecordMove (move);
+		engine->RecordMove (*move);
 
-	PerformMove (move);
+	PerformMove (*move);
 }
 
 void
@@ -689,36 +733,44 @@ cScr_ChessGame::FinishComputerMove ()
 		return;
 
 	std::string move_code = engine->TakeBestMove ();
+	//FIXME Identify computer resignation and proceed accordingly.
 
 	chess::MovePtr move;
 	//FIXME Look up the chess::Move by its code.
-	//FIXME Identify computer resignation and proceed accordingly.
+	if (!move) return; //FIXME More?
 
-	PerformMove (move);
+	PerformMove (*move);
 }
 
 void
-cScr_ChessGame::PerformMove (const chess::MovePtr& move)
+cScr_ChessGame::PerformMove (const chess::Move& move)
 {
-	if (!board || !move) return; //FIXME Do more?
+	if (!board) return;
 
 	play_state = STATE_ANIMATING;
 	UpdatePieceSelection ();
 
+	std::stringstream _log_text;
+	_log_text << (const char*) log_text;
+	_log_text << board->GetHalfmoveName () << ". ";
+	_log_text << move.GetDescription () << std::endl;
+	log_text = _log_text.str ().data ();
+
 	board->MakeMove (move);
 	fen = board->GetFEN ().data ();
 	state_data = board->GetStateData ();
+
 	AnalyzeBoard ();
 
-	object piece = GetPieceAt (move->from),
-		from = GetSquare (move->from),
-		to = GetSquare (move->to);
+	object piece = GetPieceAt (move.from),
+		from = GetSquare (move.from),
+		to = GetSquare (move.to);
 
 	if (!piece || !from || !to) return; // !?!?!?
 
-	if (move->type & chess::MOVE_CAPTURE)
+	if (move.type & chess::MOVE_CAPTURE)
 	{
-		object captured = GetPieceAt (move->GetCapturedSquare ());
+		object captured = GetPieceAt (move.GetCapturedSquare ());
 		if (!captured) return; // !?!?!?
 		for (LinkIter pop (0, captured, "Population"); pop; ++pop)
 			DestroyLink (pop);
@@ -734,17 +786,17 @@ cScr_ChessGame::PerformMove (const chess::MovePtr& move)
 	true_bool result;
 	pAIS->MakeGotoObjLoc (result, piece, to, kFastSpeed,
 		kHighPriorityAction, cMultiParm::Undef);
-	//FIXME Face appropriate direction per move->piece.GetFacing ().
+	//FIXME Face appropriate direction per move.piece.GetFacing ().
 
-	if (move->type & chess::MOVE_CASTLING)
+	if (move.type & chess::MOVE_CASTLING)
 	{
-		object rook = GetPieceAt (move->comoving_rook.from),
-			rook_from = GetSquare (move->comoving_rook.from),
-			rook_to = GetSquare (move->comoving_rook.to);
+		object rook = GetPieceAt (move.comoving_rook.from),
+			rook_from = GetSquare (move.comoving_rook.from),
+			rook_to = GetSquare (move.comoving_rook.to);
 		//FIXME Update and move the rook. Special effect?
 	}
 
-	if (move->type & chess::MOVE_PROMOTION)
+	if (move.type & chess::MOVE_PROMOTION)
 	{
 		//FIXME Replace the piece when it arrives, with special effect.
 	}
@@ -757,6 +809,24 @@ cScr_ChessGame::PerformMove (const chess::MovePtr& move)
 		play_state = STATE_INTERACTIVE;
 		UpdatePieceSelection ();
 	}
+}
+
+void
+cScr_ChessGame::ShowLogbook ()
+{
+	SService<IEngineSrv> pES (g_pScriptManager);
+	cScrStr path;
+
+	if (pES->FindFileInPath ("resname_base", "books\\logbook.str", path))
+		try
+		{
+			std::ofstream logbook (path);
+			logbook << "page_0: \"" << log_text << "\"" << std::endl;
+		}
+		catch (...) {} // the default logbook.str is an error message
+
+	SService<IDarkUISrv> pDUIS (g_pScriptManager);
+	pDUIS->ReadBook ("logbook", "pbook");
 }
 
 

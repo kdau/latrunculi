@@ -32,10 +32,14 @@ typedef unsigned int uint;
 
 namespace chess {
 
+// to be implemented appropriately by downstream user
+
+std::string Translate (const std::string& msgid);
+
 
 
 /**
- ** Square (File, Rank, SquareColor)
+ ** Square (File, Rank)
  **/
 
 enum File
@@ -87,6 +91,8 @@ struct Square
 
 	Square Offset (int delta_file, int delta_rank) const;
 
+	void Clear ();
+
 	File file;
 	Rank rank;
 };
@@ -96,7 +102,7 @@ typedef std::vector<Square> Squares;
 
 
 /**
- ** Piece (Side, PieceType, PieceSquares)
+ ** Piece (Side, PieceType)
  **/
 
 enum Side
@@ -109,6 +115,7 @@ enum Side
 
 bool SideValid (Side side);
 char SideCode (Side side);
+std::string SideName (Side side);
 int SideFacing (Side side);
 Side Opponent (Side side);
 
@@ -135,6 +142,8 @@ struct Piece
 	char GetCode () const;
 	void SetCode (char code);
 	static const char NONE_CODE;
+
+	std::string GetName () const;
 
 	Rank GetInitialRank () const;
 
@@ -166,7 +175,7 @@ typedef std::unordered_multimap<Piece, Square> PieceSquares;
 
 
 /**
- ** Move (MoveBase, MoveType, MovePtr, Moves)
+ ** Move
  **/
 
 struct MoveBase
@@ -196,8 +205,10 @@ public:
 	Square passed_square;	// valid for MOVE_TWO_SQUARE or MOVE_EN_PASSANT
 	MoveBase comoving_rook;	// valid for MOVE_CASTLING
 
-	std::string GetUCICode () const;
 	Square GetCapturedSquare () const;
+
+	std::string GetUCICode () const;
+	std::string GetDescription () const;
 
 private:
 	Move (const Piece& piece, const Square& from, const Square& to);
@@ -211,7 +222,7 @@ typedef std::vector<MovePtr> Moves;
 
 
 /**
- ** Board (GameState, CastlingOptions)
+ ** Board
  **/
 
 #define FEN_BUFSIZE 128
@@ -268,8 +279,10 @@ public:
 	Side GetActiveSide () const;
 	uint GetCastlingOptions (Side side) const;
 	Square GetEnPassantSquare () const;
-	uint GetHalfmoveClock () const;
+
+	uint GetFiftyMoveClock () const;
 	uint GetFullmoveNumber () const;
+	std::string GetHalfmoveName () const;
 
 	// game status and analysis
 
@@ -282,7 +295,7 @@ public:
 
 	// movement and player actions
 
-	void MakeMove (const MovePtr& move);
+	void MakeMove (const Move& move);
 	void Resign ();
 	void ExpireTime (Side against);
 	void Draw (GameState draw_type);
@@ -292,13 +305,13 @@ private:
 	// persistent data and initial values
 
 	char board[N_RANKS][N_FILES];
-	char& operator[] (const Square& square);
-	const char& operator[] (const Square& square) const;
+	char& operator [] (const Square& square);
+	const char& operator [] (const Square& square) const;
 
 	Side active_side;
 	uint castling_options[N_SIDES];
 	Square en_passant_square;
-	uint halfmove_clock;
+	uint fifty_move_clock;
 	uint fullmove_number;
 
 	GameState game_state;
@@ -324,7 +337,7 @@ private:
 	void EnumerateRangedMoves (const Piece& piece, const Square& from);
 	void EnumerateKnightMoves (const Piece& piece, const Square& from);
 	void EnumeratePawnMoves (const Piece& piece, const Square& from);
-	bool ConfirmPossibleMove (Move* move);
+	bool ConfirmPossibleMove (Move& move);
 
 	bool in_check[N_SIDES];
 };
@@ -333,7 +346,7 @@ inline const std::string& Board::GetFEN () const { return fen; }
 inline int Board::GetStateData () const { return state_data; }
 
 inline bool Board::IsEmpty (const Square& square) const
-	{ return GetPieceAt (square).Valid (); }
+	{ return !GetPieceAt (square).Valid (); }
 inline Piece Board::GetPieceAt (const Square& square) const
 	{ return square.Valid () ? (*this)[square] : Piece::NONE_CODE; }
 
@@ -341,7 +354,7 @@ inline Side Board::GetActiveSide () const { return active_side; }
 inline uint Board::GetCastlingOptions (Side side) const
 	{ return SideValid (side) ? castling_options[side] : uint (CASTLING_NONE); }
 inline Square Board::GetEnPassantSquare () const { return en_passant_square; }
-inline uint Board::GetHalfmoveClock () const { return halfmove_clock; }
+inline uint Board::GetFiftyMoveClock () const { return fifty_move_clock; }
 inline uint Board::GetFullmoveNumber () const { return fullmove_number; }
 
 inline GameState Board::GetGameState () const { return game_state; }

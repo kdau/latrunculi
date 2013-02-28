@@ -19,9 +19,11 @@
  *
  *****************************************************************************/
 
+#include <cstdio>
 #include <sstream>
 #include <stdexcept>
 
+#include "ScriptModule.h" //FIXME FIXME debug
 #include "chess.h"
 
 namespace chess {
@@ -29,7 +31,7 @@ namespace chess {
 
 
 /**
- ** Square (File, Rank, SquareColor)
+ ** Square (File, Rank)
  **/
 
 Square::Square (File _file, Rank _rank)
@@ -37,13 +39,14 @@ Square::Square (File _file, Rank _rank)
 {}
 
 Square::Square (const std::string& code)
-	: file (FILE_NONE), rank (RANK_NONE)
 {
 	if (code.length () == 2)
 	{
 		file = (File) tolower (code[0]);
 		rank = (Rank) code[1];
 	}
+	else
+		Clear ();
 }
 
 bool
@@ -56,7 +59,7 @@ Square::Valid () const
 bool
 Square::operator == (const Square& rhs) const
 {
-	return file == rhs.file && rank == rhs.rank;
+	return Valid () && rhs.Valid () && file == rhs.file && rank == rhs.rank;
 }
 
 std::string
@@ -83,16 +86,22 @@ Square::GetColor () const
 Square
 Square::Offset (int delta_file, int delta_rank) const
 {
-	Square result;
-	result.file = File (file + delta_file);
-	result.rank = Rank (rank + delta_rank);
-	return (Valid () && result.Valid ()) ? result : Square ();
+	Square result (File (file + delta_file), Rank (rank + delta_rank));
+	if (!Valid () || !result.Valid ()) result.Clear ();
+	return result;
+}
+
+void
+Square::Clear ()
+{
+	file = FILE_NONE;
+	rank = RANK_NONE;
 }
 
 
 
 /**
- ** Piece (Side, PieceType, PieceSquares)
+ ** Piece (Side, PieceType)
  **/
 
 bool
@@ -110,6 +119,14 @@ SideCode (Side side)
 		case SIDE_BLACK: return 'b';
 		default: return '-';
 	}
+}
+
+std::string
+SideName (Side side)
+{
+	return SideValid (side)
+		? Translate (std::string ("side_") + SideCode (side))
+		: Translate ("side_invalid");
 }
 
 int
@@ -153,7 +170,7 @@ Piece::Valid () const
 bool
 Piece::operator == (const Piece& rhs) const
 {
-	return side == rhs.side && type == rhs.type;
+	return Valid () && rhs.Valid () && side == rhs.side && type == rhs.type;
 }
 
 char
@@ -168,12 +185,12 @@ Piece::SetCode (char code)
 	side = SIDE_NONE;
 	type = PIECE_NONE;
 
-	for (uint side = 0; side < N_SIDES; ++side)
-		for (uint type = 0; type < N_PIECE_TYPES; ++type)
-			if (code == CODES[side][type])
+	for (uint _side = 0; _side < N_SIDES; ++_side)
+		for (uint _type = 0; _type < N_PIECE_TYPES; ++_type)
+			if (code == CODES[_side][_type])
 			{
-				side = (Side) side;
-				type = (PieceType) type;
+				side = (Side) _side;
+				type = (PieceType) _type;
 				return;
 			}
 }
@@ -183,6 +200,16 @@ Piece::NONE_CODE = '\0';
 
 const char
 Piece::CODES[N_SIDES][N_PIECE_TYPES+1] = { "KQRBNP", "kqrbnp" };
+
+std::string
+Piece::GetName () const
+{
+	// translator's msgids may be case-insensitive, so give side separately
+	return Valid ()
+		? Translate ((std::string ("piece_") +
+			SideCode (side)) + CODES[SIDE_BLACK][type])
+		: Translate ("piece_invalid");
+}
 
 Rank
 Piece::GetInitialRank () const
@@ -198,7 +225,7 @@ Piece::GetInitialRank () const
 
 
 /**
- ** Move (MoveBase, MoveType, MovePtr, Moves)
+ ** Move
  **/
 
 Move::Move (const Piece& _piece, const Square& _from, const Square& _to)
@@ -206,6 +233,14 @@ Move::Move (const Piece& _piece, const Square& _from, const Square& _to)
 	  type (MOVE_NONE),
 	  promotion (PIECE_NONE)
 {}
+
+Square
+Move::GetCapturedSquare () const
+{
+	return (type & MOVE_CAPTURE)
+		? ((type & MOVE_EN_PASSANT) ? passed_square : to)
+		: Square ();
+}
 
 std::string
 Move::GetUCICode () const
@@ -216,23 +251,50 @@ Move::GetUCICode () const
 	return result;
 }
 
-Square
-Move::GetCapturedSquare () const
+std::string
+Move::GetDescription () const
 {
-	if (!(type & MOVE_CAPTURE)) return Square ();
-	return (type & MOVE_EN_PASSANT) ? passed_square : to;
+	char result[128] = { 0 };
+#define describe_move(msgid, ...) \
+	snprintf (result, 128, Translate (msgid).data (), __VA_ARGS__)
+
+	if (type & MOVE_CASTLING && to.file == FILE_G)
+		describe_move ("move_castle_k", SideName (piece.side).data ());
+
+	else if (type & MOVE_CASTLING && to.file == FILE_C)
+		describe_move ("move_castle_q", SideName (piece.side).data ());
+
+	else if (type & MOVE_EN_PASSANT)
+		describe_move ("move_en_passant",
+			piece.GetName ().data (), from.GetCode ().data (),
+			captured_piece.GetName ().data (),
+			passed_square.GetCode ().data (), to.GetCode ().data ());
+
+	else if (type & MOVE_CAPTURE)
+		describe_move ("move_capture",
+			piece.GetName ().data (), from.GetCode ().data (),
+			captured_piece.GetName ().data (), to.GetCode ().data ());
+
+	else
+		describe_move ("move_to_empty", piece.GetName ().data (),
+			from.GetCode ().data (), to.GetCode ().data ());
+
+	//FIXME Describe promotions?
+
+#undef describe_move
+	return result;
 }
 
 
 /**
- ** Board (GameState, CastlingOptions)
+ ** Board
  **/
 
 // constructors and persistence
 
 Board::Board ()
 	: active_side (INITIAL_SIDE),
-	  halfmove_clock (0),
+	  fifty_move_clock (0),
 	  fullmove_number (1),
 	  game_state (GAME_ONGOING),
 	  victor (SIDE_NONE)
@@ -246,7 +308,7 @@ Board::Board ()
 Board::Board (const Board& _board)
 	: active_side (_board.active_side),
 	  en_passant_square (_board.en_passant_square),
-	  halfmove_clock (_board.halfmove_clock),
+	  fifty_move_clock (_board.fifty_move_clock),
 	  fullmove_number (_board.fullmove_number),
 	  game_state (_board.game_state),
 	  victor (_board.victor)
@@ -294,7 +356,9 @@ Board::Board (const std::string& fen, int state_data) //FIXME Test this thorough
 	if (rank != -1) fen_throw_invalid ("incomplete piece placement");
 
 	fen_expect_separator (' ');
-	//FIXME Restore active side.
+	if (pos == fen.end () || (*pos != 'w' && *pos != 'b'))
+		fen_throw_invalid ("invalid active side");
+	active_side = (*pos++ == 'w') ? SIDE_WHITE : SIDE_BLACK;
 
 	fen_expect_separator (' ');
 	for (uint side = 0; side < N_SIDES; ++side)
@@ -317,16 +381,28 @@ Board::Board (const std::string& fen, int state_data) //FIXME Test this thorough
 	}
 
 	fen_expect_separator (' ');
-	//FIXME Restore en passant square.
+	if (pos != fen.end () && *pos == '-')
+	{
+		en_passant_square.Clear ();
+		++pos;
+	}
+	else
+		{} //FIXME Restore en passant square.
 
 	fen_expect_separator (' ');
-	//FIXME Restore halfmove clock.
+	//FIXME Restore fifty move clock.
 
 	fen_expect_separator (' ');
 	//FIXME Restore fullmove number.
 
 	game_state = GameState (state_data % 64); //FIXME Validate.
-	victor = Side (state_data / 64); //FIXME Validate.
+
+	Side _victor = Side (state_data / 64);
+	if (!SideValid (_victor))
+		throw std::invalid_argument ("invalid state data (victor)");
+	else
+		victor = _victor;
+
 	CalculateData ();
 }
 
@@ -346,6 +422,14 @@ Board::GetSquaresWith (Squares& squares, const Piece& piece) const
 		squares.push_back (square->second);
 }
 
+std::string
+Board::GetHalfmoveName () const
+{
+	char result[8];
+	snprintf (result, 8, "%u%c", fullmove_number,
+		(active_side == SIDE_WHITE) ? 'a' : 'b');
+	return result;
+}
 
 
 
@@ -354,7 +438,7 @@ Board::GetSquaresWith (Squares& squares, const Piece& piece) const
 bool
 Board::IsUnderAttack (const Square& square, Side attacker) const
 {
-	(void) square; (void) attacker; return false; //FIXME Determine.
+	(void) square; (void) attacker; return false; //FIXME Determine. This should be calculated and cached. As an infinite loop or circular dependency would result, needs to occur on a special board.
 }
 
 
@@ -362,67 +446,67 @@ Board::IsUnderAttack (const Square& square, Side attacker) const
 // movement and player actions
 
 void
-Board::MakeMove (const MovePtr& move)
+Board::MakeMove (const Move& move)
 {
 	if (game_state != GAME_ONGOING)
 		throw std::runtime_error ("game already ended");
-	if (!move)
+	if (move.type == MOVE_NONE)
 		throw std::invalid_argument ("no move specified");
 
 	//FIXME Confirm the move comes from this board?
 
 	// clear origin square
-	(*this)[move->from] = Piece::NONE_CODE;
+	(*this)[move.from] = Piece::NONE_CODE;
 
 	// promote piece, if applicable
-	Piece piece = move->piece;
-	if (move->type & MOVE_PROMOTION)
-		piece.type = move->promotion;
+	Piece piece = move.piece;
+	if (move.type & MOVE_PROMOTION)
+		piece.type = move.promotion;
 
 	// place piece in target square
-	(*this)[move->to] = piece.GetCode ();
+	(*this)[move.to] = piece.GetCode ();
 
 	// capture en passant, if applicable
-	if (move->type & MOVE_EN_PASSANT)
-		(*this)[move->passed_square] = Piece::NONE_CODE;
+	if (move.type & MOVE_EN_PASSANT)
+		(*this)[move.passed_square] = Piece::NONE_CODE;
 
 	// move castling rook, if applicable
-	if (move->type & MOVE_CASTLING)
+	if (move.type & MOVE_CASTLING)
 	{
-		(*this)[move->comoving_rook.from] = Piece::NONE_CODE;
-		(*this)[move->comoving_rook.to] =
-			move->comoving_rook.piece.GetCode ();
+		(*this)[move.comoving_rook.from] = Piece::NONE_CODE;
+		(*this)[move.comoving_rook.to] =
+			move.comoving_rook.piece.GetCode ();
 	}
 
 	// move turn to opponent
 	active_side = Opponent (active_side);
 
 	// update en passant square
-	if (move->type & MOVE_TWO_SQUARE)
-		en_passant_square = move->passed_square;
+	if (move.type & MOVE_TWO_SQUARE)
+		en_passant_square = move.passed_square;
 	else
-		en_passant_square = Square ();
+		en_passant_square.Clear ();
 
 	// update castling options
-	if (move->piece.type == PIECE_KING)
-		castling_options[move->piece.side] = CASTLING_NONE;
-	else if (move->piece.type == PIECE_ROOK &&
-		 move->from.rank == move->piece.GetInitialRank ())
+	if (move.piece.type == PIECE_KING)
+		castling_options[move.piece.side] = CASTLING_NONE;
+	else if (move.piece.type == PIECE_ROOK &&
+		 move.from.rank == move.piece.GetInitialRank ())
 	{
-		if (move->from.file == FILE_A)
-			castling_options[move->piece.side] &= ~CASTLING_QUEENSIDE;
-		else if (move->from.file == FILE_H)
-			castling_options[move->piece.side] &= ~CASTLING_KINGSIDE;
+		if (move.from.file == FILE_A)
+			castling_options[move.piece.side] &= ~CASTLING_QUEENSIDE;
+		else if (move.from.file == FILE_H)
+			castling_options[move.piece.side] &= ~CASTLING_KINGSIDE;
 	}
 
-	// update halfmove clock
-	if (move->piece.type == PIECE_PAWN || move->type & MOVE_CAPTURE)
-		halfmove_clock = 0;
+	// update fifty move clock
+	if (move.piece.type == PIECE_PAWN || move.type & MOVE_CAPTURE)
+		fifty_move_clock = 0;
 	else
-		++halfmove_clock;
+		++fifty_move_clock;
 
 	// update fullmove number
-	if (move->piece.side == SIDE_BLACK)
+	if (move.piece.side == SIDE_BLACK)
 		++fullmove_number;
 
 	// update calculated data
@@ -466,7 +550,7 @@ Board::Draw (GameState draw_type)
 		// accept unconditionally; UI must detect/confirm conditions
 		break;
 	case GAME_DRAWN_FIFTY_MOVE:
-		if (halfmove_clock < 50)
+		if (fifty_move_clock < 50)
 			throw std::runtime_error ("fifty move rule not in effect");
 		break;
 	default:
@@ -484,7 +568,7 @@ Board::Draw (GameState draw_type)
 // persistent data and initial values
 
 char&
-Board::operator[] (const Square& square)
+Board::operator [] (const Square& square)
 {
 	if (!square.Valid ())
 		throw std::invalid_argument ("invalid square specified");
@@ -492,7 +576,7 @@ Board::operator[] (const Square& square)
 }
 
 const char&
-Board::operator[] (const Square& square) const
+Board::operator [] (const Square& square) const
 {
 	if (!square.Valid ())
 		throw std::invalid_argument ("invalid square specified");
@@ -608,7 +692,7 @@ Board::UpdatePersistence () //FIXME Test this thoroughly.
 	    castling_options[SIDE_BLACK] == CASTLING_NONE)	new_fen << '-';
 
 	new_fen << ' ' << en_passant_square.GetCode ();
-	new_fen << ' ' << halfmove_clock;
+	new_fen << ' ' << fifty_move_clock;
 	new_fen << ' ' << fullmove_number;
 
 	fen = new_fen.str ();
@@ -635,7 +719,7 @@ Board::IsDeadPosition () const
 			break;
 		default:
 			return false; // pawn, rook, or queen = not dead
-	}
+		}
 
 	if (n_knights <= 1 && n_bishops[0] == 0 && n_bishops[1] == 0)
 		return true; // none, or one knight
@@ -658,6 +742,8 @@ Board::EnumerateMoves ()
 		Square from ((File) file, (Rank) rank);
 		Piece piece = (*this)[from];
 		if (piece.side != active_side) continue;
+		g_pfnMPrintf ("enumerating moves of a %s on %s\n",
+			piece.GetName ().data (), from.GetCode ().data ()); //FIXME FIXME debug
 		switch (piece.type)
 		{
 		case PIECE_KING:
@@ -688,7 +774,7 @@ Board::EnumerateKingMoves (const Piece& piece, const Square& from)
 	static const int OFFSETS[][2] =
 		{ {1,1}, {1,0}, {1,-1}, {0,-1}, {-1,-1}, {-1,0}, {-1,1}, {0,1} };
 	for (auto& offset : OFFSETS)
-		ConfirmPossibleMove (new Move (piece, from,
+		ConfirmPossibleMove (*new Move (piece, from,
 			from.Offset (offset[0], offset[1])));
 
 	// castling
@@ -705,11 +791,11 @@ Board::EnumerateKingMoves (const Piece& piece, const Square& from)
 		if (IsEmpty (rook_to) && !IsUnderAttack (rook_to, opponent) &&
 			IsEmpty (king_to) && !IsUnderAttack (king_to, opponent))
 		{
-			Move* move = new Move (piece, from, king_to);
-			move->type |= MOVE_CASTLING;
-			move->comoving_rook.piece = rook;
-			move->comoving_rook.from = rook_from;
-			move->comoving_rook.to = rook_to;
+			Move& move = *new Move (piece, from, king_to);
+			move.type |= MOVE_CASTLING;
+			move.comoving_rook.piece = rook;
+			move.comoving_rook.from = rook_from;
+			move.comoving_rook.to = rook_to;
 			ConfirmPossibleMove (move);
 		}
 	}
@@ -725,11 +811,11 @@ Board::EnumerateKingMoves (const Piece& piece, const Square& from)
 			IsEmpty (king_to) && !IsUnderAttack (king_to, opponent)
 			&& IsEmpty (rook_pass))
 		{
-			Move* move = new Move (piece, from, king_to);
-			move->type |= MOVE_CASTLING;
-			move->comoving_rook.piece = rook;
-			move->comoving_rook.from = rook_from;
-			move->comoving_rook.to = rook_to;
+			Move& move = *new Move (piece, from, king_to);
+			move.type |= MOVE_CASTLING;
+			move.comoving_rook.piece = rook;
+			move.comoving_rook.from = rook_from;
+			move.comoving_rook.to = rook_to;
 			ConfirmPossibleMove (move);
 		}
 	}
@@ -740,8 +826,8 @@ Board::EnumerateRangedMoves (const Piece& piece, const Square& from)
 {
 	static const int PATHS[][2] =
 	{
-		{1,1}, {1,-1}, {-1,-1}, {-1,1}, // rook and queen
-		{0,1}, {0,-1}, {1,0}, {-1,0} // bishop and queen
+		{0,1}, {0,-1}, {1,0}, {-1,0}, // rook and queen
+		{1,1}, {1,-1}, {-1,-1}, {-1,1} // bishop and queen
 	};
 
 	uint imin = (piece.type == PIECE_BISHOP) ? 4 : 0;
@@ -751,7 +837,7 @@ Board::EnumerateRangedMoves (const Piece& piece, const Square& from)
 			to = to.Offset (PATHS[i][0], PATHS[i][1]))
 		{
 			if (to == from) continue;
-			ConfirmPossibleMove (new Move (piece, from, to));
+			ConfirmPossibleMove (*new Move (piece, from, to));
 			if (!IsEmpty (to))
 				break; // can't pass an occupied square
 		}
@@ -763,7 +849,7 @@ Board::EnumerateKnightMoves (const Piece& piece, const Square& from)
 	static const int OFFSETS[][2] =
 		{ {1,2}, {2,1}, {-1,2}, {-2,1}, {-1,-2}, {-2,-1}, {1,-2}, {2,-1} };
 	for (auto& offset : OFFSETS)
-		ConfirmPossibleMove (new Move (piece, from,
+		ConfirmPossibleMove (*new Move (piece, from,
 			from.Offset (offset[0], offset[1])));
 }
 
@@ -777,14 +863,14 @@ Board::EnumeratePawnMoves (const Piece& piece, const Square& from)
 	Square one_square = from.Offset (0, facing);
 	if (IsEmpty (one_square))
 	{
-		ConfirmPossibleMove (new Move (piece, from, one_square));
+		ConfirmPossibleMove (*new Move (piece, from, one_square));
 
 		Square two_square = one_square.Offset (0, facing);
 		if (IsEmpty (two_square) && from.rank == piece.GetInitialRank ())
 		{
-			Move* move = new Move (piece, from, two_square);
-			move->type |= MOVE_TWO_SQUARE;
-			move->passed_square = one_square;
+			Move& move = *new Move (piece, from, two_square);
+			move.type |= MOVE_TWO_SQUARE;
+			move.passed_square = one_square;
 			ConfirmPossibleMove (move);
 		}
 	}
@@ -795,55 +881,59 @@ Board::EnumeratePawnMoves (const Piece& piece, const Square& from)
 	{
 		Square capture = from.Offset (delta_file, facing);
 		if (!IsEmpty (capture))
-			ConfirmPossibleMove (new Move (piece, from, capture));
+			ConfirmPossibleMove (*new Move (piece, from, capture));
 		else if (capture == en_passant_square)
 		{
-			Move* move = new Move (piece, from, capture);
-			move->type |= MOVE_EN_PASSANT;
-			move->passed_square = capture.Offset (0, -facing);
+			Move& move = *new Move (piece, from, capture);
+			move.type |= MOVE_EN_PASSANT;
+			move.passed_square = capture.Offset (0, -facing);
 			ConfirmPossibleMove (move);
 		}
 	}
 }
 
 bool
-Board::ConfirmPossibleMove (Move* _move)
+Board::ConfirmPossibleMove (Move& move)
 {
 	// Caller must set piece; from; to; and as applicable: MOVE_TWO_SQUARE,
 	// MOVE_EN_PASSANT, MOVE_CASTLING, passed_square, and comoving_rook.
 	// These checks are not performed for the comoving rook's movement.
 
-	MovePtr move (_move);
-	if (!move) return false;
+	MovePtr move_ptr (&move);
 
 	// move cannot be off board
-	if (!move->to.Valid ()) return false;
+	if (!move.to.Valid ()) return false;
 
 	// move cannot be to friendly-occupied square
-	if (GetPieceAt (move->to).side == move->piece.side) return false;
+	if (GetPieceAt (move.to).side == move.piece.side) return false;
 
 	// identify captured piece and set related flags
-	move->captured_piece = GetPieceAt ((move->type & MOVE_EN_PASSANT)
-		? move->passed_square : move->to);
-	if (move->type & MOVE_EN_PASSANT || !move->captured_piece.Valid ())
-		move->type |= MOVE_TO_EMPTY;
-	if (move->captured_piece.Valid ())
-		move->type |= MOVE_CAPTURE;
+	move.captured_piece = GetPieceAt ((move.type & MOVE_EN_PASSANT)
+		? move.passed_square : move.to);
+	if (move.type & MOVE_EN_PASSANT || !move.captured_piece.Valid ())
+		move.type |= MOVE_TO_EMPTY;
+	if (move.captured_piece.Valid ())
+		move.type |= MOVE_CAPTURE;
 
 	// identify promotion if pawn reaches opposing king's rank
-	if (move->piece.type == PIECE_PAWN && move->to.rank ==
-		Piece (Opponent (move->piece.side), PIECE_KING).GetInitialRank ())
+	if (move.piece.type == PIECE_PAWN && move.to.rank ==
+		Piece (Opponent (move.piece.side), PIECE_KING).GetInitialRank ())
 	{
-		move->type |= MOVE_PROMOTION;
-		move->promotion = PIECE_QUEEN; //FIXME Support other promotions.
+		move.type |= MOVE_PROMOTION;
+		move.promotion = PIECE_QUEEN; //FIXME Support other promotions.
 	}
 
-	// move cannot place piece's side in check
-	Board check_test (*this); //FIXME Will the CalculateData calls in the constructor and MakeMove cause an infinite loop?
-	check_test.MakeMove (move);
-	if (check_test.IsInCheck (move->piece.side)) return false;
+	g_pfnMPrintf ("...confirming a move of type %d from %s to %s\n", move.type,
+		move.from.GetCode ().data (), move.to.GetCode ().data ()); //FIXME FIXME debug
 
-	possible_moves.push_back (std::move (move));
+	// move cannot place piece's side in check
+/*FIXME This creates an infinite loop. Check testing needs to either (1) use this board, requiring a private ReverseMove method; or (2) use a Board that doesn't calculate moves.
+	Board check_test (*this);
+	check_test.MakeMove (move);
+	if (check_test.IsInCheck (move.piece.side)) return false;
+*/
+
+	possible_moves.push_back (std::move (move_ptr));
 	return true;
 }
 
