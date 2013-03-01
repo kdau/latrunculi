@@ -140,6 +140,13 @@ cAnsiStr ObjectToStr (object target);
 cAnsiStr FormatObjectName (object target);
 
 /**
+ * HasMetaProperty
+ *
+ * Returns whether the object currently inherits from the named metaproperty.
+ */
+bool HasMetaProperty (const char* metaprop, object target);
+
+/**
  * CreateLink
  *
  * Creates a link, optionally setting link data.

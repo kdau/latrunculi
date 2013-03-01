@@ -171,84 +171,130 @@ struct hash<chess::Piece>
 namespace chess {
 
 typedef std::unordered_multimap<Piece, Square> PieceSquares;
+typedef std::pair<PieceSquares::const_iterator, PieceSquares::const_iterator>
+	PieceSquaresRange;
 
 
 
 /**
- ** Move (Resignation, Movement, PieceMove, Capture, EnPassantCapture,
- **       TwoSquarePawnMove, Castling)
+ ** Event (Loss, Draw, Move, Capture, EnPassantCapture,
+ **        TwoSquarePawnMove, Castling)
  **/
 
-//FIXME Write copying and comparison solutions for the Move family.
-
-class Move
+class Event
 {
 public:
-	virtual ~Move () {}
+	virtual ~Event () {}
 
 	bool Valid () const { return valid; }
 
 	virtual Side GetSide () const = 0;
 
-	virtual std::string GetUCICode () const = 0;
 	virtual std::string GetDescription () const = 0;
 
 protected:
-	Move () : valid (true) {}
+	Event () : valid (true) {}
+	Event (const Event&) = delete;
+
 	void Invalidate () { valid = false; }
+
+	friend bool operator == (const Event& lhs, const Event& rhs);
+	virtual bool Equals (const Event& rhs) const = 0;
 
 private:
 	bool valid;
 };
-typedef std::unique_ptr<Move> MovePtr;
-typedef std::vector<MovePtr> Moves;
 
-class Resignation : public Move
+bool operator == (const Event& lhs, const Event& rhs);
+
+typedef std::unique_ptr<Event> EventPtr;
+typedef std::vector<EventPtr> Events;
+
+class Loss : public Event
 {
 public:
-	Resignation (Side _side) : side (_side) {}
+	enum Type
+	{
+		// detected and entered automatically
+		CHECKMATE,
+
+		// entered manually; UI must detect and/or confirm conditions
+		RESIGNATION,
+		TIME_CONTROL
+	};
+
+	Loss (Type type, Side side);
 
 	virtual Side GetSide () const { return side; }
+	Type GetType () const { return type; }
 
-	virtual std::string GetUCICode () const;
 	virtual std::string GetDescription () const;
 
+protected:
+	virtual bool Equals (const Event& rhs) const;
+
 private:
+	Type type;
 	Side side;
 };
 
-//FIXME What about time control and draws?
-
-struct Movement
-{
-	Piece piece;
-	Square from;
-	Square to;
-};
-
-class PieceMove : public Move, private Movement
+class Draw : public Event
 {
 public:
-	PieceMove (const Piece& piece, const Square& from, const Square& to);
+	enum Type
+	{
+		// detected and entered automatically
+		STALEMATE,
+		DEAD_POSITION,
 
+		// entered manually; only valid if conditions are present
+		FIFTY_MOVE,
+
+		// entered manually; UI must detect and/or confirm conditions
+		THREEFOLD_REPITITION,
+		BY_AGREEMENT
+	};
+
+	Draw (Type type);
+
+	virtual Side GetSide () const { return SIDE_NONE; }
+	Type GetType () const { return type; }
+
+	virtual std::string GetDescription () const;
+
+protected:
+	virtual bool Equals (const Event& rhs) const;
+
+private:
+	Type type;
+};
+
+class Move : public Event
+{
+public:
+	Move (const Piece& piece, const Square& from, const Square& to);
+
+	virtual Side GetSide () const { return piece.side; }
 	Piece GetPiece () const { return piece; }
 	Square GetFrom () const { return from; }
 	Square GetTo () const { return to; }
+	PieceType GetPromotion () const { return promotion; }
 
-	virtual Side GetSide () const { return piece.side; }
+	std::string GetUCICode () const;
 
-	virtual std::string GetUCICode () const;
 	virtual std::string GetDescription () const;
 
-	//FIXME What about promotions? They can also be Captures (but not EPCs or TSPMs).
+protected:
+	virtual bool Equals (const Event& rhs) const;
 
 private:
 	Piece piece;
 	Square from;
 	Square to;
+	PieceType promotion;
 };
 
-class Capture : public PieceMove
+class Capture : public Move
 {
 public:
 	Capture (const Piece& piece, const Square& from,
@@ -257,8 +303,10 @@ public:
 	const Piece& GetCapturedPiece () const { return captured_piece; }
 	virtual Square GetCapturedSquare () const { return GetTo (); }
 
-	// no special UCI code
 	virtual std::string GetDescription () const;
+
+protected:
+	virtual bool Equals (const Event& rhs) const;
 
 private:
 	Piece captured_piece;
@@ -271,27 +319,30 @@ public:
 
 	virtual Square GetCapturedSquare () const { return captured_square; }
 
-	// no special UCI code
 	virtual std::string GetDescription () const;
+
+protected:
+	virtual bool Equals (const Event& rhs) const;
 
 private:
 	Square captured_square;
 };
 
-class TwoSquarePawnMove : public PieceMove
+class TwoSquarePawnMove : public Move
 {
 public:
 	TwoSquarePawnMove (Side side, File file);
 
 	const Square& GetPassedSquare () const { return passed_square; }
 
-	// no special UCI code or description
+protected:
+	virtual bool Equals (const Event& rhs) const;
 
 private:
 	Square passed_square;
 };
 
-class Castling : public PieceMove
+class Castling : public Move
 {
 public:
 	enum Type
@@ -310,8 +361,10 @@ public:
 	Square GetRookFrom () const { return rook_from; }
 	Square GetRookTo () const { return rook_to; }
 
-	// no special UCI code
 	virtual std::string GetDescription () const;
+
+protected:
+	virtual bool Equals (const Event& rhs) const;
 
 private:
 	Type type;
@@ -323,142 +376,126 @@ private:
 
 
 /**
- ** Board
+ ** Position
  **/
 
-#define FEN_BUFSIZE 128
-
-enum GameState
-{
-	// set automatically
-	GAME_ONGOING,
-	GAME_WON_CHECKMATE,
-	GAME_DRAWN_STALEMATE,
-	GAME_DRAWN_DEAD_POSITION, // not all positions detected
-
-	// set manually by Resign()
-	GAME_WON_RESIGNATION,
-
-	// set manually by ExpireTime() - UI must persist and check timer(s)
-	GAME_WON_TIME_CONTROL,
-
-	// set manually by Draw() - UI must detect and/or confirm conditions
-	GAME_DRAWN_AGREEMENT,
-	GAME_DRAWN_THREEFOLD,
-
-	// set manually by Draw() only if conditions are present
-	GAME_DRAWN_FIFTY_MOVE
-};
-
-class Board
+class Position
 {
 public:
+	Position ();
+	Position (const Position& position);
+	Position (const std::string& fen);
 
-	// constructors and persistence
-
-	Board ();
-	Board (const Board& board);
-	Board (const std::string& fen, int state_data);
-
-	const std::string& GetFEN () const;
-	int GetStateData () const;
-
-	// basic data access
+	const std::string& GetFEN () const { return fen; }
 
 	bool IsEmpty (const Square& square) const;
 	Piece GetPieceAt (const Square& square) const;
-	void GetSquaresWith (Squares& squares, const Piece& piece) const;
 
-	Side GetActiveSide () const;
+	Side GetActiveSide () const { return active_side; }
 	uint GetCastlingOptions (Side side) const;
-	Square GetEnPassantSquare () const;
+	Square GetEnPassantSquare () const { return en_passant_square; }
 
-	uint GetFiftyMoveClock () const;
-	uint GetFullmoveNumber () const;
+	uint GetFiftyMoveClock () const { return fifty_move_clock; }
+	uint GetFullmoveNumber () const { return fullmove_number; }
 	std::string GetHalfmoveName () const;
 
-	// game status and analysis
+	bool IsDead () const;
 
-	GameState GetGameState () const;
-	Side GetVictor () const;
+	virtual void MakeMove (const Move& move);
 
-	const Moves& GetPossibleMoves () const; //FIXME This doesn't keep the Moves themselves const!
-	bool IsUnderAttack (const Square& square, Side attacker) const;
-	bool IsInCheck (Side side) const;
-
-	// movement and player actions
-
-	void MakeMove (const PieceMove& move);
-	void Resign ();
-	void ExpireTime (Side against);
-	void Draw (GameState draw_type);
-
-private:
-
-	void EndGame (GameState result, Side victor);
-
-	// persistent data and initial values
-
-	char board[N_RANKS][N_FILES];
+protected:
 	char& operator [] (const Square& square);
 	const char& operator [] (const Square& square) const;
+	PieceSquaresRange GetSquaresWith (const Piece& piece) const;
 
+	void EndGame ();
+
+private:
+	char board[N_RANKS][N_FILES];
 	Side active_side;
 	uint castling_options[N_SIDES];
 	Square en_passant_square;
 	uint fifty_move_clock;
 	uint fullmove_number;
 
-	GameState game_state;
-	Side victor;
-
 	static const char INITIAL_BOARD[N_RANKS * N_FILES + 1];
 	static const Side INITIAL_SIDE;
 
-	// calculated data
-
-	void CalculateData ();
+	void UpdateTransient ();
 
 	std::string fen;
-	int state_data;
-	void UpdatePersistence ();
-
 	PieceSquares piece_squares;
-	bool IsDeadPosition () const;
+};
 
-	Moves possible_moves;
+
+
+/**
+ ** Game
+ **/
+
+class Game : public Position
+{
+public:
+	Game ();
+	Game (const Game&) = delete;
+	Game (const std::string& fen, int state_data); //FIXME Deserialize the history.
+
+	//FIXME Serialize the history.
+	int GetStateData () const;
+
+	// status and analysis
+
+	enum Result
+	{
+		ONGOING,
+		WON,
+		DRAWN
+	};
+
+	Result GetResult () const { return result; }
+	Side GetVictor () const { return victor; }
+	const Events& GetHistory () const { return history; } //FIXME This doesn't keep the Events themselves const!
+
+	const Events& GetPossibleMoves () const { return possible_moves; } //FIXME This doesn't keep the Events themselves const!
+	const Move* FindPossibleMove (const Square& from,
+		const Square& to) const;
+
+	bool IsUnderAttack (const Square& square) const;
+	bool IsInCheck () const { return in_check; }
+
+	// movement and player actions
+
+	virtual void MakeMove (const Move& move);
+	void RecordLoss (const Loss::Type& type);
+	void RecordDraw (const Draw::Type& type);
+
+private:
+	void RecordEvent (Event& event);
+	void EndGame (Result result, Side victor);
+
+	Result result;
+	Side victor;
+	Events history;
+
+	// transient data
+
+	void UpdateTransient ();
+
+	Events possible_moves;
+	//FIXME ? under_attack;
+	bool in_check;
+
+	// possible move enumeration
+
 	void EnumerateMoves ();
 	void EnumerateKingMoves (const Piece& piece, const Square& from);
 	void EnumerateRangedMoves (const Piece& piece, const Square& from);
 	void EnumerateKnightMoves (const Piece& piece, const Square& from);
 	void EnumeratePawnMoves (const Piece& piece, const Square& from);
-	bool ConfirmPossibleMove (PieceMove& move);
-
-	bool in_check[N_SIDES];
+	bool ConfirmPossibleCapture (const Piece& piece, const Square& from,
+		const Square& to);
+	bool ConfirmPossibleMove (Move& move);
 };
-
-inline const std::string& Board::GetFEN () const { return fen; }
-inline int Board::GetStateData () const { return state_data; }
-
-inline bool Board::IsEmpty (const Square& square) const
-	{ return !GetPieceAt (square).Valid (); }
-inline Piece Board::GetPieceAt (const Square& square) const
-	{ return square.Valid () ? (*this)[square] : Piece::NONE_CODE; }
-
-inline Side Board::GetActiveSide () const { return active_side; }
-inline uint Board::GetCastlingOptions (Side side) const
-	{ return SideValid (side) ? castling_options[side] : uint (Castling::NONE); }
-inline Square Board::GetEnPassantSquare () const { return en_passant_square; }
-inline uint Board::GetFiftyMoveClock () const { return fifty_move_clock; }
-inline uint Board::GetFullmoveNumber () const { return fullmove_number; }
-
-inline GameState Board::GetGameState () const { return game_state; }
-inline Side Board::GetVictor () const { return victor; }
-
-inline const Moves& Board::GetPossibleMoves () const { return possible_moves; }
-
-inline bool Board::IsInCheck (Side side) const
-	{ return SideValid (side) ? in_check[side] : false; }
 
 
 

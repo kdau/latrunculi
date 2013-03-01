@@ -232,12 +232,12 @@ ChessEngine::ClearOpeningsBook ()
 }
 
 void
-ChessEngine::StartGame (const chess::Board* board)
+ChessEngine::StartGame (const chess::Position* position)
 {
 	WaitUntilReady ();
 	WriteCommand ("ucinewgame");
-	if (board)
-		WriteCommand ("position fen " + board->GetFEN ());
+	if (position)
+		WriteCommand ("position fen " + position->GetFEN ());
 	else
 		WriteCommand ("position startpos");
 }
@@ -440,7 +440,7 @@ cScr_ChessGame::cScr_ChessGame (const char* pszName, int iHostObjId)
 	  SCRIPT_VAROBJ (ChessGame, fen, iHostObjId),
 	  SCRIPT_VAROBJ (ChessGame, state_data, iHostObjId),
 	  SCRIPT_VAROBJ (ChessGame, log_text, iHostObjId),
-	  board (NULL), engine (NULL),
+	  game (NULL), engine (NULL),
 	  play_state (STATE_ANIMATING)
 {}
 
@@ -449,8 +449,8 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 {
 	if (fen.Valid () && state_data.Valid ()) // game exists
 	{
-		board = new chess::Board ((const char*) fen, state_data);
-		if (board->GetActiveSide () == chess::SIDE_WHITE)
+		game = new chess::Game ((const char*) fen, state_data);
+		if (game->GetActiveSide () == chess::SIDE_WHITE)
 		{
 			play_state = STATE_INTERACTIVE;
 			//FIXME Anything else?
@@ -463,9 +463,9 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 	}
 	else // new game
 	{
-		board = new chess::Board ();
-		fen = board->GetFEN ().data ();
-		state_data = board->GetStateData ();
+		game = new chess::Game ();
+		fen = game->GetFEN ().data ();
+		state_data = game->GetStateData ();
 		play_state = STATE_INTERACTIVE;
 	}
 
@@ -489,7 +489,7 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 		engine->SetDifficulty
 			((ChessEngine::Difficulty) pQS->Get ("difficulty"));
 
-		engine->StartGame (board);
+		engine->StartGame (game);
 
 		SetTimedMessage ("EngineCheck", 250, kSTM_Periodic);
 	}
@@ -511,10 +511,10 @@ cScr_ChessGame::OnEndScript (sScrMsg*, cMultiParm&)
 		delete engine;
 		engine = NULL;
 	}
-	if (board)
+	if (game)
 	{
-		delete board;
-		board = NULL;
+		delete game;
+		game = NULL;
 	}
 	return 0;
 }
@@ -524,8 +524,8 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 {
 	if (pMsg->fStarting)
 	{
-		AnalyzeBoard ();
-		UpdatePieceSelection ();
+		UpdateBoardObjects ();
+		UpdateSquareSelection ();
 		//FIXME Play game-beginning effects.
 	}
 	return 0;
@@ -534,11 +534,11 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 long
 cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	if (!strcmp (pMsg->message, "SelectPiece"))
-		SelectPiece (pMsg->from);
+	if (!strcmp (pMsg->message, "SelectFrom"))
+		SelectFrom (pMsg->from);
 
-	else if (!strcmp (pMsg->message, "SelectMove"))
-		SelectMove (pMsg->from);
+	else if (!strcmp (pMsg->message, "SelectTo"))
+		SelectTo (pMsg->from);
 
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
@@ -607,100 +607,89 @@ cScr_ChessGame::GetSquare (object square)
 }
 
 object
-cScr_ChessGame::GetPieceAt (const chess::Square& _square)
+cScr_ChessGame::GetPieceAt (const chess::Square& square)
 {
-	object square = GetSquare (_square);
+	return GetPieceAt (GetSquare (square));
+}
+
+object
+cScr_ChessGame::GetPieceAt (object square)
+{
 	return square
 		? LinkIter (square, 0, "Population").Destination ()
 		: object ();
 }
 
 void
-cScr_ChessGame::AnalyzeBoard ()
+cScr_ChessGame::UpdateBoardObjects ()
 {
-	// erase old possible-move links
-	SInterface<ITraitManager> pTM (g_pScriptManager);
-	object archetype = StrToObject ("ChessSquare");
+	// erase old possible-move links (all Route links in mission are ours)
 	for (LinkIter old_move (0, 0, "Route"); old_move; ++old_move)
-		if (pTM->ObjHasDonor (old_move.Destination (), archetype))
-			DestroyLink (old_move);
+		DestroyLink (old_move);
 
-	if (!board) return;
+	if (!game) return;
 
-	chess::GameState state = board->GetGameState ();
-	if (state != chess::GAME_ONGOING)
+	if (game->GetResult () != chess::Game::ONGOING)
 	{
 		//FIXME Proceed to endgame.
 	}
 
-	if (board->IsInCheck (board->GetActiveSide ()))
+	if (game->IsInCheck ())
 	{
-		//FIXME Inform of check. (Inform for both sides?)
+		//FIXME Inform of check.
 	}
 
 	// create new possible-move links
-	for (auto& move : board->GetPossibleMoves ())
-		if (auto pmove = dynamic_cast<chess::PieceMove*> (&*move))
+	for (auto& _move : game->GetPossibleMoves ())
+		if (auto move = dynamic_cast<chess::Move*> (&*_move))
 		{
-			object piece = GetPieceAt (pmove->GetFrom ()),
-				destination = GetSquare (pmove->GetTo ());
-			if (piece && destination)
-				CreateLink ("Route", piece, destination);
+			object from = GetSquare (move->GetFrom ()),
+				to = GetSquare (move->GetTo ());
+			if (from && to)
+				CreateLink ("Route", from, to);
 		}
 }
 
 void
-cScr_ChessGame::UpdatePieceSelection ()
+cScr_ChessGame::UpdateSquareSelection ()
 {
-	SInterface<ITraitManager> pTM (g_pScriptManager);
-	object archetype = StrToObject ("ChessSquare");
-	for (LinkIter pieces (0, 0, "Population"); pieces; ++pieces)
-		if (pTM->ObjHasDonor (pieces.Source (), archetype))
+	ClearSelection ();
+
+	//FIXME Square or somesuch should expose an iterator for the 8x8 board.
+	for (uint rank = 0; rank < chess::N_RANKS; ++rank)
+	for (uint file = 0; file < chess::N_FILES; ++file)
+		if (object square = GetSquare (chess::Square
+			((chess::File) file, (chess::Rank) rank)))
 		{
-			object piece = pieces.Destination ();
 			bool can_move = (play_state == STATE_INTERACTIVE)
-				&& LinkIter (piece, 0, "Route");
-			SimpleSend (ObjId (), piece,
-				can_move ? "EnableMove" : "DisableMove");
+				&& LinkIter (square, 0, "Route");
+			SimpleSend (ObjId (), square,
+				can_move ? "EnableFrom" : "Disable");
 		}
 }
 
 void
-cScr_ChessGame::SelectPiece (object piece)
+cScr_ChessGame::SelectFrom (object from)
 {
 	if (play_state != STATE_INTERACTIVE) return;
 	ClearSelection ();
-	CreateLink ("ScriptParams", ObjId (), piece, "SelectedPiece");
-	SimpleSend (ObjId (), piece, "Select");
+	CreateLink ("ScriptParams", ObjId (), from, "SelectedSquare");
+	SimpleSend (ObjId (), from, "Select");
 }
 
 void
-cScr_ChessGame::ClearSelection ()
-{
-	SService<IPropertySrv> pPS (g_pScriptManager);
-
-	for (ScriptParamsIter old (ObjId (), "SelectedPiece"); old; ++old)
-	{
-		SimpleSend (ObjId (), old.Destination (), "Deselect");
-		DestroyLink (old);
-	}
-}
-
-void
-cScr_ChessGame::SelectMove (object destination)
+cScr_ChessGame::SelectTo (object _to)
 {
 	if (play_state != STATE_INTERACTIVE) return;
 
-	object piece = GetOneLinkByDataDest
-		("ScriptParams", ObjId (), "SelectedPiece", -1);
-	object origin = LinkIter (0, piece, "Population").Source ();
-	if (!piece || !origin || !destination) return;
-
+	object _from = ScriptParamsIter (ObjId (), "SelectedSquare");
 	ClearSelection ();
 
-	chess::PieceMove* move = NULL;
-	//FIXME Look up the move by the origin and destination.
-	if (!move) return; //FIXME More?
+	chess::Square from = GetSquare (_from), to = GetSquare (_to);
+	if (!from.Valid () || !to.Valid () || !game) return; //FIXME ?!?!?!
+
+	const chess::Move* move = game->FindPossibleMove (from, to);
+	if (!move) return; //FIXME ?!?!?!
 
 	//FIXME Catch and handle exceptions.
 	if (engine)
@@ -710,20 +699,32 @@ cScr_ChessGame::SelectMove (object destination)
 }
 
 void
+cScr_ChessGame::ClearSelection ()
+{
+	SService<IPropertySrv> pPS (g_pScriptManager);
+
+	for (ScriptParamsIter old (ObjId (), "SelectedSquare"); old; ++old)
+	{
+		SimpleSend (ObjId (), old.Destination (), "Deselect");
+		DestroyLink (old);
+	}
+}
+
+void
 cScr_ChessGame::BeginComputerMove ()
 {
 	//FIXME Don't fail silently. Catch and handle exceptions.
 	if (!engine) return;
 
 	play_state = STATE_COMPUTING;
-	UpdatePieceSelection ();
+	UpdateSquareSelection ();
 
 	uint comp_time = engine->StartCalculation ();
 
 	// schedule a special extra check of the engine
 	SetTimedMessage ("StopCalculation", comp_time, kSTM_OneShot);
 
-	//FIXME Play thinking effects.
+	//FIXME Play thinking effects. Note if in check, etc.
 }
 
 void
@@ -736,7 +737,7 @@ cScr_ChessGame::FinishComputerMove ()
 	std::string move_code = engine->TakeBestMove ();
 	//FIXME Identify computer resignation and proceed accordingly.
 
-	chess::PieceMove* move = NULL;
+	chess::Move* move = NULL;
 	//FIXME Look up the move by its code.
 	if (!move) return; //FIXME More?
 
@@ -744,25 +745,25 @@ cScr_ChessGame::FinishComputerMove ()
 }
 
 void
-cScr_ChessGame::PerformMove (const chess::PieceMove& move)
+cScr_ChessGame::PerformMove (const chess::Move& move)
 {
-	if (!board) return;
-	//FIXME Handle non-PieceMoves somewhere.
+	if (!game) return;
 
 	play_state = STATE_ANIMATING;
-	UpdatePieceSelection ();
+	UpdateSquareSelection ();
 
+	//FIXME Generate this per-view from the Game's history, allowing persistence of short movereps.
 	std::stringstream _log_text;
 	_log_text << (const char*) log_text;
-	_log_text << board->GetHalfmoveName () << ". ";
+	_log_text << game->GetHalfmoveName () << ". ";
 	_log_text << move.GetDescription () << std::endl;
 	log_text = _log_text.str ().data ();
 
-	board->MakeMove (move); //FIXME handle exceptions
-	fen = board->GetFEN ().data ();
-	state_data = board->GetStateData ();
+	game->MakeMove (move); //FIXME handle exceptions
+	fen = game->GetFEN ().data ();
+	state_data = game->GetStateData ();
 
-	AnalyzeBoard ();
+	UpdateBoardObjects (); //FIXME Shouldn't this happen after all the Population links are adjusted?
 
 	object piece = GetPieceAt (move.GetFrom ()),
 		from = GetSquare (move.GetFrom ()),
@@ -808,12 +809,12 @@ cScr_ChessGame::PerformMove (const chess::PieceMove& move)
 	}
 
 	//FIXME Delay below until after effects play.
-	if (engine && board->GetActiveSide () == chess::SIDE_BLACK)
+	if (engine && game->GetActiveSide () == chess::SIDE_BLACK)
 		BeginComputerMove ();
 	else
 	{
 		play_state = STATE_INTERACTIVE;
-		UpdatePieceSelection ();
+		UpdateSquareSelection ();
 	}
 }
 
@@ -846,11 +847,43 @@ cScr_ChessSquare::cScr_ChessSquare (const char* pszName, int iHostObjId)
 long
 cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	if (!strcmp (pMsg->message, "EnableMove"))
-		AddSingleMetaProperty ("M-PossibleMove", ObjId ());
+	SService<IPropertySrv> pPS (g_pScriptManager);
 
-	else if (!strcmp (pMsg->message, "DisableMove"))
-		RemoveSingleMetaProperty ("M-PossibleMove", ObjId ());
+	if (!strcmp (pMsg->message, "EnableFrom"))
+	{
+		//FIXME Rotate appropriately.
+		AddSingleMetaProperty ("M-PossibleFrom", ObjId ());
+	}
+
+	else if (!strcmp (pMsg->message, "EnableTo"))
+	{
+		//FIXME Rotate appropriately.
+		AddSingleMetaProperty ("M-PossibleTo", ObjId ());
+	}
+
+	else if (!strcmp (pMsg->message, "Disable"))
+	{
+		RemoveSingleMetaProperty ("M-PossibleFrom", ObjId ());
+		RemoveSingleMetaProperty ("M-PossibleTo", ObjId ());
+	}
+
+	else if (!strcmp (pMsg->message, "Select"))
+	{
+		pPS->Add (ObjId (), "Corona"); //FIXME Not appearing.
+		for (LinkIter piece (ObjId (), 0, "Population"); piece; ++piece)
+			SimpleSend (ObjId (), piece.Destination (), "Select");
+		for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
+			SimpleSend (ObjId (), move.Destination (), "EnableTo");
+	}
+
+	else if (!strcmp (pMsg->message, "Deselect"))
+	{
+		pPS->Remove (ObjId (), "Corona");
+		for (LinkIter piece (ObjId (), 0, "Population"); piece; ++piece)
+			SimpleSend (ObjId (), piece.Destination (), "Deselect");
+		for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
+			SimpleSend (ObjId (), move.Destination (), "Disable");
+	}
 
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
@@ -858,8 +891,18 @@ cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 long
 cScr_ChessSquare::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 {
-	PlaySchemaAmbient (ObjId (), StrToObject ("bowtwang_player"));
-	SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectMove");
+	if (HasMetaProperty ("M-PossibleFrom", ObjId ()))
+	{
+		PlaySchemaAmbient (ObjId (), StrToObject ("bow_begin"));
+		SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectFrom");
+	}
+
+	else if (HasMetaProperty ("M-PossibleTo", ObjId ()))
+	{
+		PlaySchemaAmbient (ObjId (), StrToObject ("bowtwang_player"));
+		SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectTo");
+	}
+
 	return 0;
 }
 
@@ -875,17 +918,19 @@ cScr_ChessPiece::cScr_ChessPiece (const char* pszName, int iHostObjId)
 long
 cScr_ChessPiece::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	if (!strcmp (pMsg->message, "EnableMove"))
-		AddSingleMetaProperty ("M-MovablePiece", ObjId ());
+	SService<IPropertySrv> pPS (g_pScriptManager);
 
-	else if (!strcmp (pMsg->message, "DisableMove"))
-		RemoveSingleMetaProperty ("M-MovablePiece", ObjId ());
-
-	else if (!strcmp (pMsg->message, "Select"))
-		Select ();
+	if (!strcmp (pMsg->message, "Select"))
+	{
+		AddSingleMetaProperty ("M-SelectedPiece", ObjId ());
+		pPS->Add (ObjId (), "SelfLit"); // dynamic light
+	}
 
 	else if (!strcmp (pMsg->message, "Deselect"))
-		Deselect ();
+	{
+		RemoveSingleMetaProperty ("M-SelectedPiece", ObjId ());
+		pPS->Remove (ObjId (), "SelfLit"); // dynamic light
+	}
 
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
@@ -900,44 +945,12 @@ cScr_ChessPiece::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 }
 
 long
-cScr_ChessPiece::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
-{
-	PlaySchemaAmbient (ObjId (), StrToObject ("bow_begin"));
-	SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectPiece");
-	return 0;
-}
-
-long
 cScr_ChessPiece::OnAIModeChange (sAIModeChangeMsg* pMsg, cMultiParm&)
 {
 	if (pMsg->mode == kAIM_Dead) // killed or knocked out
 		//FIXME Become non-physical to avoid blocking new occupant?
 		SetTimedMessage ("RestInPeace", 1000, kSTM_OneShot);
 	return 0;
-}
-
-void
-cScr_ChessPiece::Select ()
-{
-	AddSingleMetaProperty ("M-SelectedPiece", ObjId ());
-
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	pPS->Add (ObjId (), "SelfLit"); // dynamic light
-
-	for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
-		SimpleSend (ObjId (), move.Destination (), "EnableMove");
-}
-
-void
-cScr_ChessPiece::Deselect ()
-{
-	RemoveSingleMetaProperty ("M-SelectedPiece", ObjId ());
-
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	pPS->Remove (ObjId (), "SelfLit"); // dynamic light
-
-	for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
-		SimpleSend (ObjId (), move.Destination (), "DisableMove");
 }
 
 void

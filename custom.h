@@ -127,7 +127,7 @@ public:
 	void SetOpeningsBook (const std::string& book_file);
 	void ClearOpeningsBook ();
 
-	void StartGame (const chess::Board* board);
+	void StartGame (const chess::Position* position);
 	void RecordMove (const chess::Move& move);
 
 	uint StartCalculation (); // returns expected calculation time in ms
@@ -182,18 +182,19 @@ private:
 	object GetSquare (const chess::Square& square);
 	chess::Square GetSquare (object square);
 	object GetPieceAt (const chess::Square& square);
+	object GetPieceAt (object square);
 
-	void AnalyzeBoard ();
-	void UpdatePieceSelection ();
+	void UpdateBoardObjects ();
+	void UpdateSquareSelection ();
 
-	void SelectPiece (object piece);
+	void SelectFrom (object square);
+	void SelectTo (object square);
 	void ClearSelection ();
-	void SelectMove (object destination);
 
 	void BeginComputerMove ();
 	void FinishComputerMove ();
 
-	void PerformMove (const chess::PieceMove& move);
+	void PerformMove (const chess::Move& move);
 
 	void ShowLogbook ();
 
@@ -201,7 +202,7 @@ private:
 	script_int state_data;
 	script_str log_text;
 
-	chess::Board* board;
+	chess::Game* game;
 	ChessEngine* engine;
 
 	enum PlayState
@@ -254,14 +255,10 @@ public:
 protected:
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnAIModeChange (sAIModeChangeMsg* pMsg,
 		cMultiParm& mpReply);
 
 private:
-	void Select ();
-	void Deselect ();
-
 	void RestInPeace ();
 };
 #else // SCR_GENSCRIPTS

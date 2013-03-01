@@ -465,6 +465,20 @@ FormatObjectName (object target)
 	return result;
 }
 
+/* HasMetaProperty */
+
+bool
+HasMetaProperty (const char* _metaprop, object target)
+{
+	object metaprop = StrToObject (_metaprop);
+	if (!metaprop || !target) return false;
+
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	true_bool result;
+	pOS->HasMetaProperty (result, target, metaprop);
+	return result;
+}
+
 /* CreateLink */
 
 link
