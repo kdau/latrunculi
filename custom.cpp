@@ -41,6 +41,12 @@
 
 namespace chess {
 
+void
+DebugMessage (const std::string& message)
+{
+	g_pfnMPrintf (message.data ());
+}
+
 std::string
 Translate (const std::string& msgid)
 {
@@ -63,7 +69,7 @@ LinkIter::LinkIter (object source, object dest, const char* flavor)
 {
 	SService<ILinkSrv> pLS (g_pScriptManager);
 	SService<ILinkToolsSrv> pLTS (g_pScriptManager);
-	pLS->GetAll (m_links, flavor ? pLTS->LinkKindNamed (flavor) : 0,
+	pLS->GetAll (links, flavor ? pLTS->LinkKindNamed (flavor) : 0,
 		source, dest);
 }
 
@@ -72,38 +78,38 @@ LinkIter::~LinkIter () noexcept
 
 LinkIter::operator bool () const
 {
-	return m_links.AnyLinksLeft ();
+	return links.AnyLinksLeft ();
 }
 
 LinkIter&
 LinkIter::operator++ ()
 {
-	m_links.NextLink ();
+	links.NextLink ();
 	AdvanceToMatch ();
 	return *this;
 }
 
 LinkIter::operator link () const
 {
-	return m_links.AnyLinksLeft () ? m_links.Link () : link ();
+	return links.AnyLinksLeft () ? links.Link () : link ();
 }
 
 object
 LinkIter::Source () const
 {
-	return m_links.AnyLinksLeft () ? m_links.Get ().source : object ();
+	return links.AnyLinksLeft () ? links.Get ().source : object ();
 }
 
 object
 LinkIter::Destination () const
 {
-	return m_links.AnyLinksLeft () ? m_links.Get ().dest : object ();
+	return links.AnyLinksLeft () ? links.Get ().dest : object ();
 }
 
 const void*
 LinkIter::GetData () const
 {
-	return m_links.AnyLinksLeft () ? m_links.Data () : NULL;
+	return links.AnyLinksLeft () ? links.Data () : NULL;
 }
 
 void
@@ -112,31 +118,31 @@ LinkIter::GetDataField (const char* field, cMultiParm& value) const
 	if (!field)
 		throw std::invalid_argument ("invalid link data field");
 	SService<ILinkToolsSrv> pLTS (g_pScriptManager);
-	pLTS->LinkGetData (value, m_links.Link (), field);
+	pLTS->LinkGetData (value, links.Link (), field);
 }
 
 void
 LinkIter::AdvanceToMatch ()
 {
-	while (m_links.AnyLinksLeft () && !Matches ())
-		m_links.NextLink ();
+	while (links.AnyLinksLeft () && !Matches ())
+		links.NextLink ();
 }
 
 
 
 /* ScriptParamsIter */
 
-ScriptParamsIter::ScriptParamsIter (object source, const char* data,
-		object destination)
+ScriptParamsIter::ScriptParamsIter (object source, const char* _data,
+                                    object destination)
 	: LinkIter (source, destination, "ScriptParams"),
-	  m_data (data), m_only ()
+	  data (_data), only ()
 {
 	if (!source)
 		throw std::invalid_argument ("invalid source object");
-	if (data && !strcmp (data, "Self"))
-		m_only = source;
-	else if (data && !strcmp (data, "Player"))
-		m_only = StrToObject ("Player");
+	if (_data && !strcmp (_data, "Self"))
+		only = source;
+	else if (_data && !strcmp (_data, "Player"))
+		only = StrToObject ("Player");
 	AdvanceToMatch ();
 }
 
@@ -145,14 +151,14 @@ ScriptParamsIter::~ScriptParamsIter () noexcept
 
 ScriptParamsIter::operator bool () const
 {
-	return m_only ? true : LinkIter::operator bool ();
+	return only ? true : LinkIter::operator bool ();
 }
 
 ScriptParamsIter&
 ScriptParamsIter::operator++ ()
 {
-	if (m_only)
-		m_only = 0;
+	if (only)
+		only = 0;
 	else
 		LinkIter::operator++ ();
 	return *this;
@@ -160,10 +166,7 @@ ScriptParamsIter::operator++ ()
 
 ScriptParamsIter::operator object () const
 {
-	if (m_only)
-		return m_only;
-	else
-		return Destination ();
+	return only ? only : Destination ();
 }
 
 bool
@@ -171,9 +174,9 @@ ScriptParamsIter::Matches ()
 {
 	if (!LinkIter::operator bool ())
 		return false;
-	else if (m_data)
-		return !strnicmp (m_data, (const char*) GetData (),
-			m_data.GetLength () + 1);
+	else if (data)
+		return !strnicmp (data, (const char*) GetData (),
+			data.GetLength () + 1);
 	else
 		return true;
 }
@@ -237,7 +240,12 @@ ChessEngine::StartGame (const chess::Position* position)
 	WaitUntilReady ();
 	WriteCommand ("ucinewgame");
 	if (position)
-		WriteCommand ("position fen " + position->GetFEN ());
+	{
+		std::ostringstream fen;
+		fen << "position fen ";
+		position->Serialize (fen);
+		WriteCommand (fen.str ());
+	}
 	else
 		WriteCommand ("position startpos");
 }
@@ -249,11 +257,11 @@ ChessEngine::RecordMove (const chess::Move& move)
 	WriteCommand ("position moves " + move.GetUCICode ());
 }
 
-uint
+unsigned
 ChessEngine::StartCalculation ()
 {
-	static const uint comp_time[3] = { 500, 1000, 1500 }; //FIXME Adjust.
-	static const uint depth[3] = { 1, 4, 9 }; //FIXME Adjust.
+	static const unsigned comp_time[3] = { 500, 1000, 1500 }; //FIXME Adjust.
+	static const unsigned depth[3] = { 1, 4, 9 }; //FIXME Adjust.
 
 	std::stringstream go_command;
 	go_command << "go depth " << depth[difficulty]
@@ -359,7 +367,7 @@ ChessEngine::ReadReplies (const std::string& desired_reply)
 {
 	if (!ein) throw std::runtime_error ("no pipe from engine");
 	std::string last_reply;
-	uint wait_count = 0;
+	unsigned wait_count = 0;
 
 	while (last_reply.compare (desired_reply) != 0)
 	{
@@ -437,39 +445,32 @@ ChessEngine::WriteCommand (const std::string& command)
 
 cScr_ChessGame::cScr_ChessGame (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
-	  SCRIPT_VAROBJ (ChessGame, fen, iHostObjId),
-	  SCRIPT_VAROBJ (ChessGame, state_data, iHostObjId),
-	  SCRIPT_VAROBJ (ChessGame, log_text, iHostObjId),
+	  SCRIPT_VAROBJ (ChessGame, record, iHostObjId),
 	  game (NULL), engine (NULL),
-	  play_state (STATE_ANIMATING)
+	  interactive (false), computing (false)
 {}
 
 long
 cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 {
-	if (fen.Valid () && state_data.Valid ()) // game exists
+	if (record.Valid ()) // game exists
 	{
-		game = new chess::Game ((const char*) fen, state_data);
+		//FIXME Handle exceptions from record parse.
+		std::istringstream _record ((const char*) record);
+		game = new chess::Game (_record);
+
 		if (game->GetActiveSide () == chess::SIDE_WHITE)
-		{
-			play_state = STATE_INTERACTIVE;
-			//FIXME Anything else?
-		}
+			interactive = true;
+
 		else // SIDE_BLACK
-		{
-			play_state = STATE_COMPUTING;
 			SetTimedMessage ("BeginComputing", 10, kSTM_OneShot);
-		}
 	}
 	else // new game
 	{
 		game = new chess::Game ();
-		fen = game->GetFEN ().data ();
-		state_data = game->GetStateData ();
-		play_state = STATE_INTERACTIVE;
+		UpdateRecord ();
+		interactive = true;
 	}
-
-	log_text.Init (chess::Translate ("log_heading").data ());
 
 	try
 	{
@@ -496,7 +497,6 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 	catch (...)
 	{
 		engine = NULL;
-		play_state = STATE_INTERACTIVE; // can't compute
 		SetTimedMessage ("EngineFailure", 10, kSTM_OneShot);
 	}
 
@@ -508,12 +508,12 @@ cScr_ChessGame::OnEndScript (sScrMsg*, cMultiParm&)
 {
 	if (engine)
 	{
-		delete engine;
+		try { delete engine; } catch (...) {}
 		engine = NULL;
 	}
 	if (game)
 	{
-		delete game;
+		try { delete game; } catch (...) {}
 		game = NULL;
 	}
 	return 0;
@@ -554,36 +554,26 @@ cScr_ChessGame::OnTurnOn (sScrMsg* pMsg, cMultiParm&)
 long
 cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 {
-	if (engine)
-		try
-		{
-			if (!strcmp (pMsg->name, "BeginComputing"))
-				BeginComputerMove ();
+	try
+	{
+		if (engine && !strcmp (pMsg->name, "BeginComputing"))
+			BeginComputerMove ();
 
-			bool stop_calc = !strcmp (pMsg->name, "StopCalculation");
-			if (stop_calc)
-				engine->StopCalculation ();
+		else if (engine && !strcmp (pMsg->name, "StopCalculation"))
+			engine->StopCalculation ();
+			// the next EngineCheck will pick up the move
 
-			if (stop_calc || !strcmp (pMsg->name, "EngineCheck"))
-			{
-				engine->WaitUntilReady ();
-				if (play_state == STATE_COMPUTING)
-					FinishComputerMove ();
-			}
-		}
-		catch (...)
+		else if (engine && !strcmp (pMsg->name, "EngineCheck"))
 		{
-			try { delete engine; } catch (...) {}
-			engine = NULL;
-			//FIXME Engine's suddenly dead. How to proceed from here? Blackbrook resigns?
+			engine->WaitUntilReady ();
+			if (computing)
+				FinishComputerMove ();
 		}
+	}
+	catch (...) { EngineFailure (); }
 
 	if (!strcmp (pMsg->name, "EngineFailure"))
-	{
-		// inform the player that both sides will be interactive
-		SService<IDarkUISrv> pDUIS (g_pScriptManager);
-		pDUIS->ReadBook ("engine-problem", "parch");
-	}
+		EngineFailure ();
 
 	return cBaseScript::OnTimer (pMsg, mpReply);
 }
@@ -621,6 +611,17 @@ cScr_ChessGame::GetPieceAt (object square)
 }
 
 void
+cScr_ChessGame::UpdateRecord ()
+{
+	if (game)
+	{
+		std::ostringstream _record;
+		game->Serialize (_record);
+		record = _record.str ().data ();
+	}
+}
+
+void
 cScr_ChessGame::UpdateBoardObjects ()
 {
 	// erase old possible-move links (all Route links in mission are ours)
@@ -640,14 +641,14 @@ cScr_ChessGame::UpdateBoardObjects ()
 	}
 
 	// create new possible-move links
-	for (auto& _move : game->GetPossibleMoves ())
-		if (auto move = dynamic_cast<chess::Move*> (&*_move))
-		{
-			object from = GetSquare (move->GetFrom ()),
-				to = GetSquare (move->GetTo ());
-			if (from && to)
-				CreateLink ("Route", from, to);
-		}
+	for (auto& move : game->GetPossibleMoves ())
+	{
+		if (!move) continue;
+		object from = GetSquare (move->GetFrom ()),
+			to = GetSquare (move->GetTo ());
+		if (!from || !to) continue; //FIXME ?!?!?!
+		CreateLink ("Route", from, to);
+	}
 }
 
 void
@@ -655,23 +656,21 @@ cScr_ChessGame::UpdateSquareSelection ()
 {
 	ClearSelection ();
 
-	//FIXME Square or somesuch should expose an iterator for the 8x8 board.
-	for (uint rank = 0; rank < chess::N_RANKS; ++rank)
-	for (uint file = 0; file < chess::N_FILES; ++file)
-		if (object square = GetSquare (chess::Square
-			((chess::File) file, (chess::Rank) rank)))
-		{
-			bool can_move = (play_state == STATE_INTERACTIVE)
-				&& LinkIter (square, 0, "Route");
-			SimpleSend (ObjId (), square,
-				can_move ? "EnableFrom" : "Disable");
-		}
+	for (auto _square = chess::Square::BEGIN; _square != chess::Square::END;
+		++_square)
+	{
+		object square = GetSquare (_square);
+		if (!square) continue; //FIXME ?!?!?!
+		bool can_move = interactive && LinkIter (square, 0, "Route");
+		SimpleSend (ObjId (), square,
+			can_move ? "EnableFrom" : "Disable");
+	}
 }
 
 void
 cScr_ChessGame::SelectFrom (object from)
 {
-	if (play_state != STATE_INTERACTIVE) return;
+	if (!interactive) return;
 	ClearSelection ();
 	CreateLink ("ScriptParams", ObjId (), from, "SelectedSquare");
 	SimpleSend (ObjId (), from, "Select");
@@ -680,7 +679,7 @@ cScr_ChessGame::SelectFrom (object from)
 void
 cScr_ChessGame::SelectTo (object _to)
 {
-	if (play_state != STATE_INTERACTIVE) return;
+	if (!interactive) return;
 
 	object _from = ScriptParamsIter (ObjId (), "SelectedSquare");
 	ClearSelection ();
@@ -688,14 +687,13 @@ cScr_ChessGame::SelectTo (object _to)
 	chess::Square from = GetSquare (_from), to = GetSquare (_to);
 	if (!from.Valid () || !to.Valid () || !game) return; //FIXME ?!?!?!
 
-	const chess::Move* move = game->FindPossibleMove (from, to);
+	auto move = game->FindPossibleMove (from, to);
 	if (!move) return; //FIXME ?!?!?!
 
-	//FIXME Catch and handle exceptions.
-	if (engine)
-		engine->RecordMove (*move);
+	try { if (engine) engine->RecordMove (*move); }
+	catch (...) { EngineFailure (); }
 
-	PerformMove (*move);
+	PerformMove (move);
 }
 
 void
@@ -713,64 +711,84 @@ cScr_ChessGame::ClearSelection ()
 void
 cScr_ChessGame::BeginComputerMove ()
 {
-	//FIXME Don't fail silently. Catch and handle exceptions.
-	if (!engine) return;
-
-	play_state = STATE_COMPUTING;
+	interactive = false;
+	computing = true;
 	UpdateSquareSelection ();
 
-	uint comp_time = engine->StartCalculation ();
+	try
+	{
+		if (!engine) throw std::runtime_error ("no engine");
 
-	// schedule a special extra check of the engine
-	SetTimedMessage ("StopCalculation", comp_time, kSTM_OneShot);
+		unsigned comp_time = engine->StartCalculation ();
 
-	//FIXME Play thinking effects. Note if in check, etc.
+		// schedule a special extra check of the engine
+		SetTimedMessage ("StopCalculation", comp_time, kSTM_OneShot);
+	}
+	catch (...) { EngineFailure (); return; }
+
+	//FIXME Play thinking effects.
+	if (game->IsInCheck ())
+	{
+		//FIXME Note the opponent's check.
+	}
 }
 
 void
 cScr_ChessGame::FinishComputerMove ()
 {
-	if (play_state != STATE_COMPUTING || !engine ||
-			engine->PeekBestMove ().empty ())
+	//FIXME Call EngineFailure from here when appropriate.
+	if (!computing || !engine || !game || engine->PeekBestMove ().empty ())
 		return;
 
 	std::string move_code = engine->TakeBestMove ();
-	//FIXME Identify computer resignation and proceed accordingly.
+	//FIXME Identify computer resignation and proceed accordingly. (Is this even possible?)
 
-	chess::Move* move = NULL;
-	//FIXME Look up the move by its code.
-	if (!move) return; //FIXME More?
+	auto move = game->FindPossibleMove (move_code);
+	if (!move) return; //FIXME ?!?!?!
 
-	PerformMove (*move);
+	PerformMove (move);
 }
 
 void
-cScr_ChessGame::PerformMove (const chess::Move& move)
+cScr_ChessGame::EngineFailure ()
 {
-	if (!game) return;
+	if (engine)
+	{
+		try { delete engine; } catch (...) {}
+		engine = NULL;
+	}
 
-	play_state = STATE_ANIMATING;
+	interactive = true;
+	computing = false;
+
+	// inform the player that both sides will be interactive
+	SService<IDarkUISrv> pDUIS (g_pScriptManager);
+	pDUIS->ReadBook ("engine-problem", "parch");
+
+	UpdateSquareSelection ();
+}
+
+void
+cScr_ChessGame::PerformMove (const chess::MovePtr& move)
+{
+	if (!game || !move) return;
+	interactive = false;
 	UpdateSquareSelection ();
 
-	//FIXME Generate this per-view from the Game's history, allowing persistence of short movereps.
-	std::stringstream _log_text;
-	_log_text << (const char*) log_text;
-	_log_text << game->GetHalfmoveName () << ". ";
-	_log_text << move.GetDescription () << std::endl;
-	log_text = _log_text.str ().data ();
+	//FIXME Handle these in cScr_ChessPiece.
+	SService<IAIScrSrv> pAIS (g_pScriptManager);
+	true_bool result;
 
 	game->MakeMove (move); //FIXME handle exceptions
-	fen = game->GetFEN ().data ();
-	state_data = game->GetStateData ();
+	UpdateRecord ();
 
-	UpdateBoardObjects (); //FIXME Shouldn't this happen after all the Population links are adjusted?
-
-	object piece = GetPieceAt (move.GetFrom ()),
-		from = GetSquare (move.GetFrom ()),
-		to = GetSquare (move.GetTo ());
+	object piece = GetPieceAt (move->GetFrom ()),
+		from = GetSquare (move->GetFrom ()),
+		to = GetSquare (move->GetTo ());
 	if (!piece || !from || !to) return; //FIXME !?!?!?
 
-	if (auto capture = dynamic_cast<const chess::Capture*> (&move))
+	if (auto capture =
+		std::dynamic_pointer_cast<const chess::Capture> (move))
 	{
 		object captured =
 			GetPieceAt (capture->GetCapturedSquare ());
@@ -779,7 +797,7 @@ cScr_ChessGame::PerformMove (const chess::Move& move)
 		for (LinkIter pop (0, captured, "Population"); pop; ++pop)
 			DestroyLink (pop);
 
-		//FIXME Have piece attack captured. Delay below until after.
+		//FIXME Have @piece attack @captured. Delay below until after.
 
 		SService<IActReactSrv> pARS (g_pScriptManager);
 		pARS->ARStimulate (captured,
@@ -789,31 +807,45 @@ cScr_ChessGame::PerformMove (const chess::Move& move)
 	DestroyLink (LinkIter (from, piece, "Population"));
 	CreateLink ("Population", to, piece);
 
-	SService<IAIScrSrv> pAIS (g_pScriptManager);
-	true_bool result;
-	pAIS->MakeGotoObjLoc (result, piece, to, kFastSpeed,
+	eAIScriptSpeed speed = (move->GetPiece ().type == chess::Piece::KING)
+		? kNormalSpeed : kFastSpeed; //FIXME Other variations based on piece and/or movement.
+	pAIS->MakeGotoObjLoc (result, piece, to, speed,
 		kHighPriorityAction, cMultiParm::Undef);
-	//FIXME Face appropriate direction per piece.GetFacing ().
+	//FIXME Face appropriate direction per GetFacing ().
 
-	if (auto castling = dynamic_cast<const chess::Castling*> (&move))
+	if (auto castling =
+		std::dynamic_pointer_cast<const chess::Castling> (move))
 	{
 		object rook = GetPieceAt (castling->GetRookFrom ()),
 			rook_from = GetSquare (castling->GetRookFrom ()),
 			rook_to = GetSquare (castling->GetRookTo ());
-		//FIXME Update and move the rook. Special effect?
+
+		DestroyLink (LinkIter (rook_from, rook, "Population"));
+		CreateLink ("Population", rook_to, rook);
+
+		pAIS->MakeGotoObjLoc (result, rook, rook_to, speed,
+			kHighPriorityAction, cMultiParm::Undef);
+		//FIXME Can the rook bow as it passes the king?
+		//FIXME Face appropriate direction per GetFacing ().
 	}
 
-	if (false) //FIXME identify promotion
+	if (move->GetPromotion ().Valid ())
 	{
-		//FIXME Replace the piece when it arrives, with special effect.
+		//FIXME DestroyLink (LinkIter (to, piece, "Population"));
+		//FIXME Create the promoted piece and populate @to with it.
+		//FIXME Destroy the old piece and reveal the new on arrival, with a special effect.
 	}
+
+	UpdateBoardObjects ();
 
 	//FIXME Delay below until after effects play.
-	if (engine && game->GetActiveSide () == chess::SIDE_BLACK)
+	if (game->GetResult () != chess::Game::ONGOING)
+		{} // UpdateBoardObjects will proceed from here
+	else if (engine && game->GetActiveSide () == chess::SIDE_BLACK)
 		BeginComputerMove ();
 	else
 	{
-		play_state = STATE_INTERACTIVE;
+		interactive = true;
 		UpdateSquareSelection ();
 	}
 }
@@ -824,11 +856,14 @@ cScr_ChessGame::ShowLogbook ()
 	SService<IEngineSrv> pES (g_pScriptManager);
 	cScrStr path;
 
-	if (pES->FindFileInPath ("resname_base", "books\\logbook.str", path))
+	if (game && pES->FindFileInPath
+	    ("resname_base", "books\\logbook.str", path))
 		try
 		{
 			std::ofstream logbook (path);
-			logbook << "page_0: \"" << log_text << "\"" << std::endl;
+			logbook << "page_0: \"";
+			game->WriteLogbook (logbook);
+			logbook << "\"" << std::endl;
 		}
 		catch (...) {} // the default logbook.str is an error message
 
@@ -858,13 +893,19 @@ cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 	else if (!strcmp (pMsg->message, "EnableTo"))
 	{
 		//FIXME Rotate appropriately.
+		pPS->Add (ObjId (), "Corona"); //FIXME Not appearing.
 		AddSingleMetaProperty ("M-PossibleTo", ObjId ());
 	}
 
 	else if (!strcmp (pMsg->message, "Disable"))
 	{
-		RemoveSingleMetaProperty ("M-PossibleFrom", ObjId ());
-		RemoveSingleMetaProperty ("M-PossibleTo", ObjId ());
+		if (HasMetaProperty ("M-PossibleTo", ObjId ()))
+		{
+			pPS->Remove (ObjId (), "Corona");
+			RemoveSingleMetaProperty ("M-PossibleTo", ObjId ());
+		}
+		else
+			RemoveSingleMetaProperty ("M-PossibleFrom", ObjId ());
 	}
 
 	else if (!strcmp (pMsg->message, "Select"))

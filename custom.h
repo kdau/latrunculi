@@ -39,7 +39,7 @@
 
 
 /**
- * Iterator: LinkIter //FIXME Be a real C++ iterator.
+ * Iterator: LinkIter
  *
  * Iterates through links that share a source, destination, and/or flavor.
  * Subclasses can further limit the set (for example, based on data) by
@@ -67,7 +67,7 @@ protected:
 	virtual bool Matches () { return true; }
 
 private:
-	linkset m_links;
+	linkset links;
 };
 #endif // SCR_GENSCRIPTS
 
@@ -97,8 +97,8 @@ protected:
 	virtual bool Matches ();
 
 private:
-	cAnsiStr m_data;
-	object m_only;
+	cAnsiStr data;
+	object only;
 };
 #endif // SCR_GENSCRIPTS
 
@@ -130,7 +130,7 @@ public:
 	void StartGame (const chess::Position* position);
 	void RecordMove (const chess::Move& move);
 
-	uint StartCalculation (); // returns expected calculation time in ms
+	unsigned StartCalculation (); // returns expected calculation time in ms
 	void StopCalculation ();
 
 	const std::string& PeekBestMove () const;
@@ -184,6 +184,7 @@ private:
 	object GetPieceAt (const chess::Square& square);
 	object GetPieceAt (object square);
 
+	void UpdateRecord ();
 	void UpdateBoardObjects ();
 	void UpdateSquareSelection ();
 
@@ -193,24 +194,16 @@ private:
 
 	void BeginComputerMove ();
 	void FinishComputerMove ();
+	void EngineFailure ();
 
-	void PerformMove (const chess::Move& move);
+	void PerformMove (const chess::MovePtr& move);
 
 	void ShowLogbook ();
 
-	script_str fen;
-	script_int state_data;
-	script_str log_text;
-
+	script_str record;
 	chess::Game* game;
 	ChessEngine* engine;
-
-	enum PlayState
-	{
-		STATE_INTERACTIVE,
-		STATE_ANIMATING,
-		STATE_COMPUTING
-	} play_state;
+	bool interactive, computing;
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessGame","BaseScript",cScr_ChessGame)

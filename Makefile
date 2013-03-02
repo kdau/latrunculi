@@ -51,8 +51,6 @@ INCLUDES = -I. -I$(srcdir) -I$(LGDIR) -I$(SCRLIBDIR) -I$(DH2DIR)
 LIBDIRS = -L. -L$(LGDIR) -L$(SCRLIBDIR) -L$(DH2DIR)
 LIBS = -ldh2 -luuid -lws2_32
 
-# If you care for this... # -Wno-unused-variable
-# A lot of the callbacks have unused parameters, so I turn that off.
 CXXFLAGS = -W -Wall -masm=intel -std=gnu++0x
 ARFLAGS = rc
 LDFLAGS = -mwindows -mdll -Wl,--enable-auto-image-base -static-libgcc -static-libstdc++
