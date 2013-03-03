@@ -78,9 +78,7 @@ Square::Valid () const
 bool
 Square::operator == (const Square& rhs) const
 {
-	// special cases for END (which isn't Valid) allow its use in for loops
-	return (this == &END || &rhs == &END || (Valid () && rhs.Valid ()))
-		&& file == rhs.file && rank == rhs.rank;
+	return Valid () && rhs.Valid () && file == rhs.file && rank == rhs.rank;
 }
 
 bool
@@ -137,9 +135,6 @@ Square::operator ++ ()
 
 const Square
 Square::BEGIN = { FILE_A, RANK_1 };
-
-const Square
-Square::END = { FILE_A, N_RANKS };
 
 void
 Square::Clear ()
@@ -1145,7 +1140,7 @@ void
 Position::UpdatePieceSquares ()
 {
 	piece_squares.clear ();
-	for (auto square = Square::BEGIN; square != Square::END; ++square)
+	for (auto square = Square::BEGIN; square.Valid (); ++square)
 	{
 		Piece piece = (*this)[square];
 		if (piece.Valid ())
@@ -1216,24 +1211,21 @@ Game::Serialize (std::ostream& record)
 			record << ' ' << event->GetMLAN ();
 }
 
-void
-Game::WriteLogbook (std::ostream& logbook)
+std::string
+Game::GetLogbookHeading (unsigned page)
 {
-	logbook << TranslateFormat ("logbook_heading",
-		SideName (SIDE_WHITE).data (), SideName (SIDE_BLACK).data ())
-		<< std::endl;
-	unsigned halfmove_number = 0;
-	for (auto& event : history)
-	{
-		if (!event) continue;
-		logbook
-			<< (halfmove_number / 2 + 1) // fullmove number
-			<< ((halfmove_number % 2 == 0) ? 'a' : 'b') // halfmove
-			<< ". "
-			<< event->GetDescription ()
-			<< std::endl;
-		++halfmove_number;
-	}
+	return TranslateFormat ("logbook_heading",
+		SideName (SIDE_WHITE).data (),
+		SideName (SIDE_BLACK).data (),
+		page);
+}
+
+std::string
+Game::GetHalfmovePrefix (unsigned halfmove)
+{
+	return TranslateFormat (
+		(halfmove % 2 == 0) ? "event_prefix_a" : "event_prefix_b",
+		halfmove / 2 + 1);
 }
 
 // status and analysis
@@ -1374,12 +1366,10 @@ Game::UpdatePossibleMoves ()
 {
 	possible_moves.clear ();
 
-	for (auto from = Square::BEGIN; from != Square::END; ++from)
+	for (auto from = Square::BEGIN; from.Valid (); ++from)
 	{
 		Piece piece = (*this)[from];
 		if (piece.side != GetActiveSide ()) continue;
-		DebugMessage ("enumerating moves of a " + piece.GetName () +
-			" on " + from.GetCode () + "\n"); //FIXME FIXME debug
 		switch (piece.type)
 		{
 		case Piece::KING:
@@ -1534,16 +1524,11 @@ Game::ConfirmPossibleMove (const MovePtr& move)
 	if (!move || !move->Valid ())
 		return false;
 
-	DebugMessage ("...confirming a move: " + move->GetDescription () + "\n"); //FIXME FIXME debug
-
 	// move cannot place piece's side in check
 	Position check_test (*this);
 	check_test.MakeMove (move);
 	if (check_test.IsInCheck (move->GetSide ()))
-	{
-		DebugMessage ("......check test failed\n"); //FIXME FIXME debug
 		return false;
-	}
 
 	possible_moves.push_back (move);
 	return true;

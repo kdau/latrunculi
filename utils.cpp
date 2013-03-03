@@ -465,18 +465,28 @@ FormatObjectName (object target)
 	return result;
 }
 
-/* HasMetaProperty */
+/* InheritsFrom */
 
 bool
-HasMetaProperty (const char* _metaprop, object target)
+InheritsFrom (const char* _ancestor, object target)
 {
-	object metaprop = StrToObject (_metaprop);
-	if (!metaprop || !target) return false;
+	object ancestor = StrToObject (_ancestor);
+	if (!ancestor || !target) return false;
 
 	SService<IObjectSrv> pOS (g_pScriptManager);
 	true_bool result;
-	pOS->HasMetaProperty (result, target, metaprop);
+	pOS->InheritsFrom (result, target, ancestor);
 	return result;
+}
+
+/* DestroyObject */
+
+void
+DestroyObject (object destroy)
+{
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	if (destroy)
+		pOS->Destroy (destroy);
 }
 
 /* CreateLink */

@@ -98,7 +98,7 @@ struct Square
 	Square Offset (int delta_file, int delta_rank) const;
 
 	Square& operator ++ ();
-	static const Square BEGIN, END;
+	static const Square BEGIN;
 
 	void Clear ();
 
@@ -488,7 +488,8 @@ public:
 	Game (std::istream& record);
 	void Serialize (std::ostream& record);
 
-	void WriteLogbook (std::ostream& logbook);
+	static std::string GetLogbookHeading (unsigned page);
+	static std::string GetHalfmovePrefix (unsigned halfmove);
 
 	// status and analysis
 

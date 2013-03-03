@@ -127,13 +127,14 @@ public:
 	void SetOpeningsBook (const std::string& book_file);
 	void ClearOpeningsBook ();
 
-	void StartGame (const chess::Position* position);
-	void RecordMove (const chess::Move& move);
+	void StartGame (const chess::Position* initial_position);
+	void UpdatePosition (const chess::Position& position);
 
+	bool IsCalculating () const { return calculating; }
 	unsigned StartCalculation (); // returns expected calculation time in ms
 	void StopCalculation ();
 
-	const std::string& PeekBestMove () const;
+	const std::string& PeekBestMove () const { return best_move; }
 	std::string TakeBestMove ();
 
 	void WaitUntilReady ();
@@ -152,6 +153,7 @@ private:
 
 	Difficulty difficulty;
 	std::string best_move;
+	bool started, calculating;
 };
 #endif // !SCR_GENSCRIPTS
 
@@ -181,8 +183,11 @@ protected:
 private:
 	object GetSquare (const chess::Square& square);
 	chess::Square GetSquare (object square);
+
 	object GetPieceAt (const chess::Square& square);
 	object GetPieceAt (object square);
+	object CreatePiece (object square, const chess::Piece& piece,
+		bool start_positioned);
 
 	void UpdateRecord ();
 	void UpdateBoardObjects ();
@@ -194,11 +199,13 @@ private:
 
 	void BeginComputerMove ();
 	void FinishComputerMove ();
-	void EngineFailure ();
 
-	void PerformMove (const chess::MovePtr& move);
+	void PerformMove (const chess::MovePtr& move, bool from_engine);
 
-	void ShowLogbook ();
+	void ShowLogbook (const std::string& art);
+
+	void EngineFailure (const std::string& where);
+	void ScriptFailure (const std::string& where);
 
 	script_str record;
 	chess::Game* game;
@@ -215,7 +222,7 @@ GEN_FACTORY("ChessGame","BaseScript",cScr_ChessGame)
  * Script: ChessSquare
  * Inherits: BaseScript
  *
- * Handles player interaction with a single square on the chess board.
+ * Handles interactions with a single square on the chess board.
  */
 #if !SCR_GENSCRIPTS
 class cScr_ChessSquare : public virtual cBaseScript
@@ -225,7 +232,10 @@ public:
 
 protected:
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
+
+private:
+	void CreateButton (const std::string& archetype, const cScrVec& facing);
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
@@ -246,13 +256,34 @@ public:
 	cScr_ChessPiece (const char* pszName, int iHostObjId);
 
 protected:
+	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnObjActResult (sAIObjActResultMsg* pMsg,
+		cMultiParm& mpReply);
 	virtual long OnAIModeChange (sAIModeChangeMsg* pMsg,
 		cMultiParm& mpReply);
 
 private:
-	void RestInPeace ();
+	void GoToSquare (object square, bool attacking);
+	void Reposition (object square = object ());
+	script_int going_to_square; // object
+
+	void AttackPiece (object piece, uint time);
+	void MaintainAttack (uint time);
+	void FinishAttack ();
+	script_int attacking_piece; // object
+
+	void BeAttacked (object attacker);
+	void Die ();
+	void BeginBurial ();
+	void FinishBurial ();
+	script_int being_attacked_by; // object
+
+	void BePromoted (object promotion);
+	void RevealPromotion ();
+	void FinishPromotion ();
+	script_int being_promoted_to; // object
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessPiece","BaseAIScript",cScr_ChessPiece)

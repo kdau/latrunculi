@@ -140,11 +140,18 @@ cAnsiStr ObjectToStr (object target);
 cAnsiStr FormatObjectName (object target);
 
 /**
- * HasMetaProperty
+ * InheritsFrom
  *
- * Returns whether the object currently inherits from the named metaproperty.
+ * Returns whether the object inherits from the named archetype or metaproperty.
  */
-bool HasMetaProperty (const char* metaprop, object target);
+bool InheritsFrom (const char* ancestor, object target);
+
+/**
+ * DestroyObject
+ *
+ * Destroys an object.
+ */
+void DestroyObject (object destroy);
 
 /**
  * CreateLink
