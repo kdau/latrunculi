@@ -388,7 +388,7 @@ Draw::Draw (Type _type)
 	case STALEMATE:
 	case DEAD_POSITION:
 	case FIFTY_MOVE:
-	case THREEFOLD_REPITITION:
+	case THREEFOLD_REPETITION:
 	case BY_AGREEMENT:
 		break;
 	default:
@@ -407,7 +407,7 @@ Draw::FromMLAN (const std::string& mlan, Side)
 	else if (mlan.compare ("50M") == 0)
 		type = FIFTY_MOVE;
 	else if (mlan.compare ("3FR") == 0)
-		type = THREEFOLD_REPITITION;
+		type = THREEFOLD_REPETITION;
 	else if (mlan.compare ("=") == 0)
 		type = BY_AGREEMENT;
 	else
@@ -423,7 +423,7 @@ Draw::GetMLAN () const
 	case STALEMATE: return "SM";
 	case DEAD_POSITION: return "DP";
 	case FIFTY_MOVE: return "50M";
-	case THREEFOLD_REPITITION: return "3FR";
+	case THREEFOLD_REPETITION: return "3FR";
 	case BY_AGREEMENT: return "=";
 	default: return std::string ();
 	}
@@ -438,7 +438,7 @@ Draw::GetDescription () const
 	case STALEMATE: msgid = "draw_stalemate"; break;
 	case DEAD_POSITION: msgid = "draw_dead_position"; break;
 	case FIFTY_MOVE: msgid = "draw_fifty_move"; break;
-	case THREEFOLD_REPITITION: msgid = "draw_threefold_repitition"; break;
+	case THREEFOLD_REPETITION: msgid = "draw_threefold_repetition"; break;
 	case BY_AGREEMENT: msgid = "draw_by_agreement"; break;
 	default: return std::string ();
 	}
@@ -1311,7 +1311,7 @@ Game::RecordDraw (const Draw::Type& type)
 		if (GetFiftyMoveClock () < 50)
 			throw std::runtime_error ("fifty move rule not in effect");
 		break;
-	case Draw::THREEFOLD_REPITITION:
+	case Draw::THREEFOLD_REPETITION:
 	case Draw::BY_AGREEMENT:
 		// accept unconditionally; UI must detect/confirm conditions
 		break;

@@ -283,10 +283,20 @@ protected:
 		cMultiParm& mpReply);
 
 private:
-	void Fade (bool in);
+	chess::Side GetSide ();
+
+	void Fade ();
+	enum Fading
+	{
+		FADE_NONE,
+		FADE_IN,
+		FADE_OUT
+	};
+	script_int fading; // Fading
+
+	void Reposition (object square = object ());
 
 	void GoToSquare (object square, GoType type);
-	void Reposition (object square = object ());
 	script_int going_to_square, go_type; // object, GoType
 
 	void AttackPiece (object piece, uint time);

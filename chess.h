@@ -277,7 +277,7 @@ public:
 		FIFTY_MOVE,
 
 		// entered manually; UI must detect and/or confirm conditions
-		THREEFOLD_REPITITION,
+		THREEFOLD_REPETITION,
 		BY_AGREEMENT
 	};
 
