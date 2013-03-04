@@ -197,20 +197,30 @@ private:
 	void SelectTo (object square);
 	void ClearSelection ();
 
-	void BeginComputerMove ();
-	void FinishComputerMove ();
+	void BeginComputing ();
+	void FinishComputing ();
 
-	void PerformMove (const chess::MovePtr& move, bool from_engine);
+	void BeginMove (const chess::MovePtr& move, bool from_engine);
+	void FinishMove ();
 
 	void ShowLogbook (const std::string& art);
 
 	void EngineFailure (const std::string& where);
 	void ScriptFailure (const std::string& where);
 
-	script_str record;
 	chess::Game* game;
 	ChessEngine* engine;
-	bool interactive, computing;
+
+	script_str record;
+
+	enum State
+	{
+		NONE = 0,
+		INTERACTIVE,
+		COMPUTING,
+		MOVING
+	};
+	script_int state; // State
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessGame","BaseScript",cScr_ChessGame)
@@ -250,6 +260,14 @@ GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
  * Coordinates the activity of an AI chess piece with the ChessGame ("TheGame").
  */
 #if !SCR_GENSCRIPTS
+enum GoType
+{
+	GO_NONE = 0,
+	GO_PRIMARY,
+	GO_SECONDARY,
+	GO_ATTACK
+};
+
 class cScr_ChessPiece : public virtual cBaseAIScript
 {
 public:
@@ -265,9 +283,11 @@ protected:
 		cMultiParm& mpReply);
 
 private:
-	void GoToSquare (object square, bool attacking);
+	void Fade (bool in);
+
+	void GoToSquare (object square, GoType type);
 	void Reposition (object square = object ());
-	script_int going_to_square; // object
+	script_int going_to_square, go_type; // object, GoType
 
 	void AttackPiece (object piece, uint time);
 	void MaintainAttack (uint time);

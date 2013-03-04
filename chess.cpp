@@ -336,9 +336,9 @@ Loss::FromMLAN (const std::string& mlan, Side active_side)
 	Type type = NONE;
 	if (mlan.compare ("#") == 0)
 		type = CHECKMATE;
-	else if (mlan.compare ("resign") == 0)
+	else if (mlan.compare ("0") == 0)
 		type = RESIGNATION;
-	else if (mlan.compare ("time") == 0)
+	else if (mlan.compare ("TC") == 0)
 		type = TIME_CONTROL;
 	else
 		return NULL;
@@ -351,8 +351,8 @@ Loss::GetMLAN () const
 	switch (type)
 	{
 	case CHECKMATE: return "#";
-	case RESIGNATION: return "resign";
-	case TIME_CONTROL: return "time";
+	case RESIGNATION: return "0";
+	case TIME_CONTROL: return "TC";
 	default: return std::string ();
 	}
 }
@@ -400,15 +400,15 @@ EventPtr
 Draw::FromMLAN (const std::string& mlan, Side)
 {
 	Type type = NONE;
-	if (mlan.compare ("stale") == 0)
+	if (mlan.compare ("SM") == 0)
 		type = STALEMATE;
-	else if (mlan.compare ("dead") == 0)
+	else if (mlan.compare ("DP") == 0)
 		type = DEAD_POSITION;
-	else if (mlan.compare ("fifty") == 0)
+	else if (mlan.compare ("50M") == 0)
 		type = FIFTY_MOVE;
-	else if (mlan.compare ("three") == 0)
+	else if (mlan.compare ("3FR") == 0)
 		type = THREEFOLD_REPITITION;
-	else if (mlan.compare ("agree") == 0)
+	else if (mlan.compare ("=") == 0)
 		type = BY_AGREEMENT;
 	else
 		return NULL;
@@ -420,11 +420,11 @@ Draw::GetMLAN () const
 {
 	switch (type)
 	{
-	case STALEMATE: return "stale";
-	case DEAD_POSITION: return "dead";
-	case FIFTY_MOVE: return "fifty";
-	case THREEFOLD_REPITITION: return "three";
-	case BY_AGREEMENT: return "agree";
+	case STALEMATE: return "SM";
+	case DEAD_POSITION: return "DP";
+	case FIFTY_MOVE: return "50M";
+	case THREEFOLD_REPITITION: return "3FR";
+	case BY_AGREEMENT: return "=";
 	default: return std::string ();
 	}
 }
@@ -466,7 +466,7 @@ Move::Move (const Piece& _piece, const Square& _from, const Square& _to)
 	// identify promotion if pawn reaches opposing king's rank
 	if (piece.type == Piece::PAWN && to.rank ==
 		Piece (Opponent (GetSide ()), Piece::KING).GetInitialRank ())
-		promotion = Piece::QUEEN; //FIXME Support under-promotions.
+		promotion = Piece::QUEEN; // always promote to queen
 }
 
 EventPtr
@@ -1248,7 +1248,7 @@ Game::FindPossibleMove (const std::string& uci_code) const
 	case 5:
 		promotion.SetCode (uci_code.back ());
 		if (!promotion.Valid ()) return NULL;
-		//FIXME Don't discard the requested promotion type.
+		// discard the promotion type; always promote to queen
 	case 4:
 		return FindPossibleMove (uci_code.substr (0, 2),
 			uci_code.substr (2, 2));
