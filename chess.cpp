@@ -166,12 +166,21 @@ SideCode (Side side)
 	}
 }
 
+Side
+SideFromCode (char code)
+{
+	switch (code)
+	{
+		case 'W': case 'w': return SIDE_WHITE;
+		case 'B': case 'b': return SIDE_BLACK;
+		default: return SIDE_NONE;
+	}
+}
+
 std::string
 SideName (Side side)
 {
-	return SideValid (side)
-		? Translate (std::string ("side_") + SideCode (side))
-		: std::string ();
+	return SideValid (side) ? Translate ("side_", side) : std::string ();
 }
 
 int
@@ -255,10 +264,8 @@ Piece::CODES[N_SIDES][N_TYPES+1] = { "KQRBNP", "kqrbnp" };
 std::string
 Piece::GetName () const
 {
-	// translator's msgids may be case-insensitive, so give side separately
-	return Valid ()
-		? Translate ((std::string ("piece_") +
-			SideCode (side)) + CODES[SIDE_BLACK][type])
+	return Valid () ? Translate (std::string ("piece_") +
+				CODES[SIDE_BLACK][type], side)
 		: std::string ();
 }
 
@@ -334,15 +341,19 @@ EventPtr
 Loss::FromMLAN (const std::string& mlan, Side active_side)
 {
 	Type type = NONE;
+	Side side = active_side;
 	if (mlan.compare ("#") == 0)
 		type = CHECKMATE;
 	else if (mlan.compare ("0") == 0)
 		type = RESIGNATION;
-	else if (mlan.compare ("TC") == 0)
+	else if (mlan.length () == 3 && mlan.substr (0, 2).compare ("TC") == 0)
+	{
 		type = TIME_CONTROL;
+		side = SideFromCode (mlan[2]);
+	}
 	else
 		return NULL;
-	return std::make_shared<Loss> (type, active_side);
+	return std::make_shared<Loss> (type, side);
 }
 
 std::string
@@ -352,7 +363,7 @@ Loss::GetMLAN () const
 	{
 	case CHECKMATE: return "#";
 	case RESIGNATION: return "0";
-	case TIME_CONTROL: return "TC";
+	case TIME_CONTROL: return std::string ("TC") + SideCode (side);
 	default: return std::string ();
 	}
 }
@@ -716,7 +727,7 @@ std::string
 Castling::GetDescription () const
 {
 	return TranslateFormat
-		((type == KINGSIDE) ? "move_castle_k" : "move_castle_q",
+		((type == KINGSIDE) ? "move_castle_ks" : "move_castle_qs",
 		 SideName (GetSide ()).data ());
 }
 
@@ -1172,7 +1183,7 @@ Game::Game (std::istream& record)
 	{
 		std::string token;
 		record >> token;
-
+		
 		EventPtr event = Event::FromMLAN (token, event_side);
 		if (!event)
 			throw std::invalid_argument ("invalid event");
@@ -1189,7 +1200,7 @@ Game::Game (std::istream& record)
 			result = DRAWN;
 			event_side = SIDE_NONE;
 		}
-		else
+		else if (auto move = std::dynamic_pointer_cast<Move> (event))
 		{
 			if (event_side == SIDE_BLACK) ++event_fullmove;
 			event_side = Opponent (event_side);
@@ -1283,22 +1294,30 @@ Game::MakeMove (const MovePtr& move)
 }
 
 void
-Game::RecordLoss (const Loss::Type& type)
+Game::RecordLoss (Loss::Type type, Side side)
 {
 	if (result != ONGOING) throw std::runtime_error ("game already ended");
 
-	if (!Loss (type, GetActiveSide ()).Valid ())
-		throw std::runtime_error ("invalid loss type");
-
-	if (type == Loss::CHECKMATE)
+	switch (type)
+	{
+	case Loss::CHECKMATE:
 		throw std::runtime_error ("loss type must be automatically detected");
+	case Loss::RESIGNATION:
+		if (side != GetActiveSide ())
+			throw std::runtime_error ("only active side may resign");
+		break;
+	case Loss::TIME_CONTROL:
+		break;
+	default:
+		throw std::runtime_error ("invalid loss type");
+	}
 
-	history.push_back (std::make_shared<Loss> (type, GetActiveSide ()));
-	EndGame (WON, Opponent (GetActiveSide ()));
+	history.push_back (std::make_shared<Loss> (type, side));
+	EndGame (WON, Opponent (side));
 }
 
 void
-Game::RecordDraw (const Draw::Type& type)
+Game::RecordDraw (Draw::Type type)
 {
 	if (result != ONGOING) throw std::runtime_error ("game already ended");
 
@@ -1324,10 +1343,10 @@ Game::RecordDraw (const Draw::Type& type)
 }
 
 void
-Game::EndGame (Result result, Side _victor)
+Game::EndGame (Result _result, Side _victor)
 {
 	Position::EndGame ();
-	result = result;
+	result = _result;
 	victor = _victor;
 	possible_moves.clear ();
 }

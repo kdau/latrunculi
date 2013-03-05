@@ -34,6 +34,9 @@
 #include "scriptvars.h"
 #include "chess.h"
 
+chess::Side GetSide (object target);
+int GetChessSet (chess::Side side);
+
 #endif // SCR_GENSCRIPTS
 
 
@@ -160,6 +163,27 @@ private:
 
 
 /**
+ * Script: ChessIntro
+ * Inherits: BaseScript
+ *
+ * Sets up the introduction/scenario selection mission.
+ */
+#if !SCR_GENSCRIPTS
+class cScr_ChessIntro : public virtual cBaseScript
+{
+public:
+	cScr_ChessIntro (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("ChessIntro","BaseScript",cScr_ChessIntro)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
  * Script: ChessGame
  * Inherits: BaseScript
  *
@@ -177,8 +201,8 @@ protected:
 	virtual long OnEndScript (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 
 private:
 	object GetSquare (const chess::Square& square);
@@ -203,10 +227,16 @@ private:
 	void BeginMove (const chess::MovePtr& move, bool from_engine);
 	void FinishMove ();
 
+	void BeginEndgame ();
+	void FinishEndgame (int goal);
+
+	void AnnounceCheck ();
+	void ShowEventMessage (const chess::EventConstPtr& event);
+	void HeraldEvent (chess::Side side, const char* event);
 	void ShowLogbook (const std::string& art);
 
-	void EngineFailure (const std::string& where);
-	void ScriptFailure (const std::string& where);
+	void EngineFailure (const std::string& where, const std::string& what);
+	void ScriptFailure (const std::string& where, const std::string& what);
 
 	chess::Game* game;
 	ChessEngine* engine;
@@ -224,6 +254,36 @@ private:
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessGame","BaseScript",cScr_ChessGame)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
+ * Script: ChessClock
+ * Inherits: BaseScript
+ *
+ * Handles time control and the game clock interface.
+ */
+#if !SCR_GENSCRIPTS
+class cScr_ChessClock : public virtual cBaseScript
+{
+public:
+	cScr_ChessClock (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnWorldDeSelect (sScrMsg* pMsg, cMultiParm& mpReply);
+
+	void ShowTimeRemaining ();
+
+	script_int time_remaining, time_total; // in seconds
+	bool focused; // don't persist
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("ChessClock","BaseScript",cScr_ChessClock)
 #endif // SCR_GENSCRIPTS
 
 
@@ -249,6 +309,29 @@ private:
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
+ * Script: ChessHerald
+ * Inherits: BaseAIScript
+ *
+ * Coordinates the activity of an AI herald with the ChessGame ("TheGame").
+ */
+#if !SCR_GENSCRIPTS
+class cScr_ChessHerald : public virtual cBaseAIScript
+{
+public:
+	cScr_ChessHerald (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
+
+	void HeraldEvent (const std::string& event);
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("ChessHerald","BaseAIScript",cScr_ChessHerald)
 #endif // SCR_GENSCRIPTS
 
 
@@ -283,8 +366,6 @@ protected:
 		cMultiParm& mpReply);
 
 private:
-	chess::Side GetSide ();
-
 	void Fade ();
 	enum Fading
 	{

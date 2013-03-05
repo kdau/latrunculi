@@ -30,15 +30,6 @@
 
 namespace chess {
 
-// to be implemented appropriately by downstream user
-
-void DebugMessage (const std::string& message);
-std::string Translate (const std::string& msgid);
-
-// implemented here
-
-std::string TranslateFormat (const std::string& format_msgid, ...);
-
 
 
 /**
@@ -124,6 +115,7 @@ enum Side
 
 bool SideValid (Side side);
 char SideCode (Side side);
+Side SideFromCode (char code);
 std::string SideName (Side side);
 int SideFacing (Side side);
 Side Opponent (Side side);
@@ -511,8 +503,8 @@ public:
 	// movement and player actions
 
 	virtual void MakeMove (const MovePtr& move);
-	void RecordLoss (const Loss::Type& type);
-	void RecordDraw (const Draw::Type& type);
+	void RecordLoss (Loss::Type type, Side side);
+	void RecordDraw (Draw::Type type);
 
 private:
 	void EndGame (Result result, Side victor);
@@ -536,6 +528,21 @@ private:
 
 	Moves possible_moves;
 };
+
+
+
+/**
+ ** Utility functions
+ **/
+
+// to be implemented appropriately by downstream user
+
+void DebugMessage (const std::string& message);
+std::string Translate (const std::string& msgid, Side side = SIDE_NONE);
+
+// implemented here
+
+std::string TranslateFormat (const std::string& format_msgid, ...);
 
 
 
