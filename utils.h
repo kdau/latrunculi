@@ -147,6 +147,13 @@ cAnsiStr FormatObjectName (object target);
 bool InheritsFrom (const char* ancestor, object target);
 
 /**
+ * FaceObject
+ *
+ * Rotates an AI to face another object.
+ */
+void FaceObject (object ai, object face);
+
+/**
  * DestroyObject
  *
  * Destroys an object.

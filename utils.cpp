@@ -479,6 +479,43 @@ InheritsFrom (const char* _ancestor, object target)
 	return result;
 }
 
+/* FaceObject */
+
+void
+FaceObject (object ai, object face)
+{
+	if (!ObjectExists (ai) || !ObjectExists (face)) return;
+
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	cScrVec ai_pos, face_pos, old_facing, new_facing;
+	pOS->Position (ai_pos, ai);
+	pOS->Facing (old_facing, ai);
+	pOS->Position (face_pos, face);
+
+	float delta_x = ai_pos.x - face_pos.x,
+		delta_y = ai_pos.y - face_pos.y;
+	if (delta_x == 0.0)
+	{
+		if (delta_y == 0.0)
+			return;
+		else
+			new_facing.z = (delta_y > 0.0) ? 270.0 : 90.0;
+	}
+	else
+		new_facing.z = atan (delta_y / delta_x) * 90.0 / M_PI_2
+			+ ((delta_x > 0.0) ? 180.0 : 0.0);
+
+	pOS->Teleport (ai, ai_pos, new_facing, 0);
+
+	// play turning motion for major direction changes
+	if (std::fabs (old_facing.z - new_facing.z) > 22.5)
+	{
+		SService<IPuppetSrv> pPuS (g_pScriptManager);
+		true_bool result;
+		pPuS->PlayMotion (result, ai, "bh111o48"); //FIXME What if not human?
+	}
+}
+
 /* DestroyObject */
 
 void

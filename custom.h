@@ -163,6 +163,43 @@ private:
 
 
 /**
+ * Script: Fade
+ * Inherits: BaseScript
+ *
+ * Fades an object in and out (opacity) in response to the FadeIn and FadeOut
+ * messages. FadeAway works like FadeOut except that the object is destroyed
+ * after it is fully transparent.
+ */
+#if !SCR_GENSCRIPTS
+class cScr_Fade : public virtual cBaseScript
+{
+public:
+	cScr_Fade (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
+
+private:
+	void Fade ();
+
+	enum State
+	{
+		NONE,
+		FADING_IN,
+		FADING_OUT,
+		FADING_AWAY
+	};
+	script_int state; // State
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("Fade","BaseScript",cScr_Fade)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
  * Script: ChessIntro
  * Inherits: BaseScript
  *
@@ -273,6 +310,7 @@ public:
 protected:
 	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnWorldDeSelect (sScrMsg* pMsg, cMultiParm& mpReply);
@@ -301,11 +339,22 @@ public:
 	cScr_ChessSquare (const char* pszName, int iHostObjId);
 
 protected:
+	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
 
 private:
-	void CreateButton (const std::string& archetype, const cScrVec& facing);
+	object CreateDecal (char piece);
+	object CreateButton ();
+
+	enum State
+	{
+		DISABLED,
+		ENABLED_FROM,
+		ENABLED_TO
+	};
+	script_int state; // State
+	script_int side; // chess::Side - only valid if state != DISABLED
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
@@ -338,7 +387,7 @@ GEN_FACTORY("ChessHerald","BaseAIScript",cScr_ChessHerald)
 
 /**
  * Script: ChessPiece
- * Inherits: BaseAIScript
+ * Inherits: BaseAIScript, Fade
  *
  * Coordinates the activity of an AI chess piece with the ChessGame ("TheGame").
  */
@@ -347,11 +396,11 @@ enum GoType
 {
 	GO_NONE = 0,
 	GO_PRIMARY,
-	GO_SECONDARY,
+	GO_CASTLING_ROOK,
 	GO_ATTACK
 };
 
-class cScr_ChessPiece : public virtual cBaseAIScript
+class cScr_ChessPiece : public virtual cBaseAIScript, public cScr_Fade
 {
 public:
 	cScr_ChessPiece (const char* pszName, int iHostObjId);
@@ -366,18 +415,10 @@ protected:
 		cMultiParm& mpReply);
 
 private:
-	void Fade ();
-	enum Fading
-	{
-		FADE_NONE,
-		FADE_IN,
-		FADE_OUT
-	};
-	script_int fading; // Fading
-
 	void Reposition (object square = object ());
 
 	void GoToSquare (object square, GoType type);
+	void ArriveAtSquare (uint time);
 	script_int going_to_square, go_type; // object, GoType
 
 	void AttackPiece (object piece, uint time);
@@ -397,7 +438,7 @@ private:
 	script_int being_promoted_to; // object
 };
 #else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessPiece","BaseAIScript",cScr_ChessPiece)
+GEN_FACTORY("ChessPiece","Fade",cScr_ChessPiece)
 #endif // SCR_GENSCRIPTS
 
 
