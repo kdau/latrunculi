@@ -22,6 +22,7 @@
 #include "utils.h"
 #include "ScriptModule.h"
 #include "ScriptLib.h"
+#include "custom.h"
 
 #include <lg/types.h>
 #include <lg/scrservices.h>
@@ -509,11 +510,7 @@ FaceObject (object ai, object face)
 
 	// play turning motion for major direction changes
 	if (std::fabs (old_facing.z - new_facing.z) > 22.5)
-	{
-		SService<IPuppetSrv> pPuS (g_pScriptManager);
-		true_bool result;
-		pPuS->PlayMotion (result, ai, "bh111o48"); //FIXME What if not human?
-	}
+		PlayMotion (ai, MOTION_TURN);
 }
 
 /* DestroyObject */

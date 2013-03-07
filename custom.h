@@ -37,6 +37,17 @@
 chess::Side GetSide (object target);
 int GetChessSet (chess::Side side);
 
+typedef unsigned long COLORREF;
+COLORREF GetChessSetColor (int set);
+
+enum CustomMotion
+{
+	MOTION_BOW_TO_KING,
+	MOTION_PLAY_HORN,
+	MOTION_TURN
+};
+bool PlayMotion (object ai, CustomMotion motion);
+
 #endif // SCR_GENSCRIPTS
 
 
@@ -200,6 +211,29 @@ GEN_FACTORY("Fade","BaseScript",cScr_Fade)
 
 
 /**
+ * Script: ConfirmVerb
+ * Inherits: BaseScript
+ *
+ * When frobbed, displays an on-screen confirmation prompt. If confirmed, sends
+ * the message in the @Message parameter along ControlDevice links.
+ */
+#if !SCR_GENSCRIPTS
+class cScr_ConfirmVerb : public virtual cBaseScript
+{
+public:
+	cScr_ConfirmVerb (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
+
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("ConfirmVerb","BaseScript",cScr_ConfirmVerb)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
  * Script: ChessIntro
  * Inherits: BaseScript
  *
@@ -221,11 +255,33 @@ GEN_FACTORY("ChessIntro","BaseScript",cScr_ChessIntro)
 
 
 /**
+ * Script: ChessScenario
+ * Inherits: BaseScript
+ *
+ * Selects one of the scenarios and proceeds to its mission.
+ */
+#if !SCR_GENSCRIPTS
+class cScr_ChessScenario : public virtual cBaseScript
+{
+public:
+	cScr_ChessScenario (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("ChessScenario","BaseScript",cScr_ChessScenario)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
  * Script: ChessGame
  * Inherits: BaseScript
  *
- * Coordinates the chess gameplay, managing the board state, player controls,
- * movement/capture/promotion effects, and ChessEngine connection.
+ * Coordinates the chess gameplay, managing the game model, engine connection,
+ * player controls, and effects for moves/captures, key events, etc.
  */
 #if !SCR_GENSCRIPTS
 class cScr_ChessGame : public virtual cBaseScript
@@ -251,8 +307,8 @@ private:
 		bool start_positioned);
 
 	void UpdateRecord ();
-	void UpdateBoardObjects ();
-	void UpdateSquareSelection ();
+	void UpdateSim ();
+	void UpdateInterface ();
 
 	void SelectFrom (object square);
 	void SelectTo (object square);
@@ -344,7 +400,7 @@ protected:
 	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
 
 private:
-	object CreateDecal (char piece);
+	object CreateDecal (char piece = chess::Piece::NONE_CODE);
 	object CreateButton ();
 
 	enum State
@@ -358,29 +414,6 @@ private:
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessHerald
- * Inherits: BaseAIScript
- *
- * Coordinates the activity of an AI herald with the ChessGame ("TheGame").
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessHerald : public virtual cBaseAIScript
-{
-public:
-	cScr_ChessHerald (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-
-	void HeraldEvent (const std::string& event);
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessHerald","BaseAIScript",cScr_ChessHerald)
 #endif // SCR_GENSCRIPTS
 
 
@@ -436,6 +469,9 @@ private:
 	void RevealPromotion ();
 	void FinishPromotion ();
 	script_int being_promoted_to; // object
+
+	// for special "piece" types
+	void HeraldEvent (const std::string& event);
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessPiece","Fade",cScr_ChessPiece)
