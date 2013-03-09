@@ -44,6 +44,8 @@ enum CustomMotion
 {
 	MOTION_BOW_TO_KING,
 	MOTION_PLAY_HORN,
+	MOTION_THINKING,
+	MOTION_THOUGHT,
 	MOTION_TURN
 };
 bool PlayMotion (object ai, CustomMotion motion);
@@ -225,10 +227,35 @@ public:
 
 protected:
 	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
-
+	virtual long OnFrobInvEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnContained (sContainedScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ConfirmVerb","BaseScript",cScr_ConfirmVerb)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
+ * Script: Titled
+ * Inherits: BaseScript
+ *
+ * Displays the translated msgid named in the @Title parameter when the object
+ * is focused in-world.
+ */
+#if !SCR_GENSCRIPTS
+class cScr_Titled : public virtual cBaseScript
+{
+public:
+	cScr_Titled (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnFrobWorldBegin (sFrobMsg* pMsg, cMultiParm& mpReply);
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("Titled","BaseScript",cScr_Titled)
 #endif // SCR_GENSCRIPTS
 
 

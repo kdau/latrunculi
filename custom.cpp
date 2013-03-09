@@ -76,43 +76,20 @@ COLORREF
 GetChessSetColor (int set)
 {
 	static COLORREF default_color = RGB (255, 255, 255);
+	if (set < 1) return default_color;
 
 	char _metaprop[128] = { 0 };
 	snprintf (_metaprop, 128, "M-ChessSet%d", set);
-	g_pfnMPrintf ("getting color for set %d with metaprop %s...\n", set, _metaprop); //FIXME FIXME testing
 	object metaprop = StrToObject (_metaprop);
-	if (!metaprop)
-		return default_color;
+	if (!metaprop) return default_color;
 
 	SService<IPropertySrv> pPS (g_pScriptManager);
-	cMultiParm _hue, _sat;
-	pPS->Get (_hue, metaprop, "LightColor", "hue");
-	pPS->Get (_sat, metaprop, "LightColor", "saturation");
-	if (_hue.type != kMT_Float || _sat.type != kMT_Float)
+	cMultiParm color_name;
+	pPS->Get (color_name, metaprop, "TrapQVar", "NULL");
+	if (color_name.type == kMT_String)
+		return strtocolor (color_name);
+	else
 		return default_color;
-
-	double hue = fclamp (_hue, 0.0, 1.0),
-		sat = fclamp (_sat, 0.0, 1.0),
-		val = 1.0;
-	double C = val * sat, M = val - (val * sat), H = hue * 6.0;
-	double X = C * (1.0 - fabs (fmod (H, 2.0) - 1.0)), R, G, B;
-
-	switch (int (floor (H * 6.0)))
-	{
-	case 0: R = C + M; G = X + M; B = 0.0+M; break;
-	case 1: R = X + M; G = C + M; B = 0.0+M; break;
-	case 2: R = 0.0+M; G = C + M; B = X + M; break;
-	case 3: R = 0.0+M; G = X + M; B = C + M; break;
-	case 4: R = X + M; G = 0.0+M; B = C + M; break;
-	case 5: R = C + M; G = 0.0+M; B = X + M; break;
-	default: R = M; G = M; B = M; break;
-	}
-
-	BYTE r = int (fclamp (R, 0.0, 1.0) * 255.0),
-		g = int (fclamp (G, 0.0, 1.0) * 255.0),
-		b = int (fclamp (B, 0.0, 1.0) * 255.0);
-	g_pfnMPrintf ("...from hue %f sat %f got RGB %d,%d,%d\n", hue, sat, r, g, b); //FIXME FIXME testing
-	return RGB (r, g, b);
 }
 
 bool
@@ -123,6 +100,8 @@ PlayMotion (object ai, CustomMotion _motion)
 	{
 	case MOTION_BOW_TO_KING: motion = "humsalute3"; break;
 	case MOTION_PLAY_HORN: motion = "humgulp"; break;
+	case MOTION_THINKING: motion = "bh112003"; break;
+	case MOTION_THOUGHT: motion = "bh112550"; break;
 	case MOTION_TURN: motion = "bh111o48"; break;
 	default: return false;
 	}
@@ -606,7 +585,17 @@ cScr_Fade::Fade ()
 	float opacity = float (_opacity) +
 		((state == FADING_IN) ? 0.05 : -0.05);
 	opacity = fclamp (opacity, 0.0, 1.0);
+
 	pPS->SetSimple (ObjId (), "RenderAlpha", opacity);
+
+	for (LinkIter cont (ObjId (), 0, "Contains"); cont; ++cont)
+		pPS->SetSimple (cont.Destination (), "RenderAlpha", opacity);
+	for (LinkIter detl (0, ObjId (), "DetailAttachement"); detl; ++detl)
+		pPS->SetSimple (detl.Source (), "RenderAlpha", opacity);
+	for (LinkIter part (0, ObjId (), "ParticleAttachement"); part; ++part)
+		pPS->SetSimple (part.Source (), "RenderAlpha", opacity);
+	for (LinkIter phys (0, ObjId (), "PhysAttach"); phys; ++phys)
+		pPS->SetSimple (phys.Source (), "RenderAlpha", opacity);
 
 	if ((state == FADING_IN) ? (opacity < 0.96) : (opacity > 0.04))
 	{
@@ -633,9 +622,84 @@ cScr_ConfirmVerb::cScr_ConfirmVerb (const char* pszName, int iHostObjId)
 long
 cScr_ConfirmVerb::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 {
+	SInterface<ITraitManager> pTM (g_pScriptManager);
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	object clone; pOS->Create (clone, pTM->GetArchetype (ObjId ()));
+	CreateLink ("Owns", ObjId (), clone);
+
+	SService<IContainSrv> pCS (g_pScriptManager);
+	pCS->Add (clone, StrToObject ("Player"), kContainTypeGeneric, false);
+
+	SService<IDarkUISrv> pDUIS (g_pScriptManager);
+	pDUIS->InvSelect (clone);
+
+	AddSingleMetaProperty ("M-Transparent", ObjId ());
+	return 0;
+}
+
+long
+cScr_ConfirmVerb::OnFrobInvEnd (sFrobMsg*, cMultiParm&)
+{
+	// player said yes
+	object owner = LinkIter (0, ObjId (), "Owns").Source ();
+	RemoveSingleMetaProperty ("M-Transparent", owner);
 	char* message = GetObjectParamString (ObjId (), "Message", "TurnOn");
-	CDSend (message, ObjId ());
+	CDSend (message, owner);
 	g_pMalloc->Free (message);
+	// we are destroyed automatically
+	return 0;
+}
+
+long
+cScr_ConfirmVerb::OnContained (sContainedScrMsg* pMsg, cMultiParm&)
+{
+	if (pMsg->event == kContainRemove) // player said no
+	{
+		object owner = LinkIter (0, ObjId (), "Owns").Source ();
+		RemoveSingleMetaProperty ("M-Transparent", owner);
+		SetTimedMessage ("Reject", 10, kSTM_OneShot);
+	}
+	return 0;
+}
+
+long
+cScr_ConfirmVerb::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
+{
+	if (!strcmp (pMsg->name, "Reject"))
+	{
+		DestroyObject (ObjId ());
+		return 0;
+	}
+	else
+		return cBaseScript::OnTimer (pMsg, mpReply);
+}
+
+
+
+/* Titled */
+
+cScr_Titled::cScr_Titled (const char* pszName, int iHostObjId)
+	: cBaseScript (pszName, iHostObjId)
+{}
+
+long
+cScr_Titled::OnWorldSelect (sScrMsg*, cMultiParm&)
+{
+	char* msgid = GetObjectParamString (ObjId (), "Title");
+	if (msgid != NULL)
+	{
+		std::string message = chess::Translate (msgid);
+		g_pMalloc->Free (msgid);
+		ShowString (message.data (),
+			CalcTextTime (message.data (), 250));
+	}
+	return 0;
+}
+
+long
+cScr_Titled::OnFrobWorldBegin (sFrobMsg*, cMultiParm&)
+{
+	ShowString ("", 1);
 	return 0;
 }
 
@@ -652,16 +716,11 @@ cScr_ChessIntro::OnSim (sSimMsg* pMsg, cMultiParm&)
 {
 	if (pMsg->fStarting)
 	{
-		SService<IPropertySrv> pPS (g_pScriptManager);
-		for (ScriptParamsIter scroll (ObjId (), "WelcomeScroll");
-		     scroll; ++scroll)
-			if (pPS->Possessed (scroll, "Book"))
-				pPS->SetSimple (scroll, "Book", "welcome");
-
-		SService<IObjectSrv> pOS (g_pScriptManager);
 		for (ScriptParamsIter door (ObjId (), "ScenarioDoor");
 		     door; ++door)
-			pOS->Destroy (door);
+			DestroyObject (door);
+
+		DestroyObject (ObjId ());
 	}
 	return 0;
 }
@@ -685,7 +744,8 @@ cScr_ChessScenario::OnWorldSelect (sScrMsg*, cMultiParm&)
 	SService<IDataSrv> pDS (g_pScriptManager);
 	pDS->GetString (buffer, "titles", msgid, "", "strings");
 
-	ShowString (buffer, 2000);
+	ShowString (buffer, CalcTextTime (buffer),
+		GetChessSetColor (GetObjectParamInt (ObjId (), "WhiteSet", 0)));
 	buffer.Free ();
 
 	return 0;
@@ -731,10 +791,12 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 	{
 		std::istringstream _record ((const char*) record);
 		try { game = new chess::Game (_record); }
-		CATCH_SCRIPT_FAILURE ("BeginScript", return 0)
+		CATCH_SCRIPT_FAILURE ("BeginScript", game = NULL; return 0)
 
 		if (state == COMPUTING) // need to restart the engine
 			SetTimedMessage ("BeginComputing", 10, kSTM_OneShot);
+		else if (game->GetResult () != chess::Game::ONGOING)
+			return 0; // don't start the engine
 		else if (state == NONE) // ???
 			state = INTERACTIVE;
 	}
@@ -808,9 +870,7 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 	}
 
 	UpdateSim ();
-
-	HeraldEvent (chess::SIDE_NONE, "begin");
-
+	SetTimedMessage ("HeraldBegin", 10, kSTM_OneShot);
 	return 0;
 }
 
@@ -886,6 +946,9 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 		CATCH_ENGINE_FAILURE ("StopCalculation",)
 		// the next EngineCheck will pick up the move
 
+	else if (!strcmp (pMsg->name, "HeraldBegin"))
+		HeraldEvent (chess::SIDE_NONE, "begin");
+
 	else if (!strcmp (pMsg->name, "EngineFailure"))
 	{
 		// this timer is only set from OnBeginScript
@@ -895,12 +958,15 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 		EngineFailure ("BeginScript", what);
 	}
 
-	else if (!strcmp (pMsg->name, "FinishMove"))
-		FinishMove ();
-
 	else if (!strcmp (pMsg->name, "FinishEndgame") &&
 			pMsg->data.type == kMT_Int)
 		FinishEndgame ((int) pMsg->data);
+
+	else if (!strcmp (pMsg->name, "EndMission"))
+	{
+		SService<IDarkGameSrv> pDGS (g_pScriptManager);
+		pDGS->EndMission ();
+	}
 
 	return cBaseScript::OnTimer (pMsg, mpReply);
 }
@@ -1008,14 +1074,11 @@ cScr_ChessGame::UpdateSim ()
 
 	if (!game) return;
 
-	if (game->GetResult () != chess::Game::ONGOING)
+	if (state != MOVING && game->GetResult () != chess::Game::ONGOING)
 	{
 		BeginEndgame ();
 		return; // UpdateInterface will be called from there
 	}
-
-	if (state == INTERACTIVE && game->IsInCheck ())
-		AnnounceCheck ();
 
 	// create new possible-move links
 	for (auto& move : game->GetPossibleMoves ())
@@ -1034,34 +1097,24 @@ cScr_ChessGame::UpdateInterface ()
 {
 	ClearSelection ();
 
-	bool can_resign = state == INTERACTIVE &&
-		game && game->GetResult () == chess::Game::ONGOING;
+	bool can_resign = state == INTERACTIVE && game &&
+		game->GetResult () == chess::Game::ONGOING &&
+		game->GetActiveSide () == chess::SIDE_WHITE;
 	for (ScriptParamsIter flag (ObjId (), "ResignFlag"); flag; ++flag)
 	{
 		if (can_resign)
-			RemoveSingleMetaProperty ("FrobInert",
-				flag.Destination ());
+			RemoveMetaProperty ("M-Transparent", flag.Destination ());
 		else
-			AddSingleMetaProperty ("FrobInert",
-				flag.Destination ());
+			AddMetaProperty ("M-Transparent", flag.Destination ());
 	}
 
-	bool fifty_move = game && game->GetFiftyMoveClock () >= 50;
+	bool fifty_move = can_resign && game->GetFiftyMoveClock () >= 50;
 	for (ScriptParamsIter flag (ObjId (), "FiftyMoveFlag"); flag; ++flag)
 	{
 		if (fifty_move)
-			RemoveSingleMetaProperty ("M-Transparent",
-				flag.Destination ());
+			RemoveMetaProperty ("M-Transparent", flag.Destination ());
 		else
-			AddSingleMetaProperty ("M-Transparent",
-				flag.Destination ());
-
-		if (fifty_move && can_resign)
-			RemoveSingleMetaProperty ("FrobInert",
-				flag.Destination ());
-		else
-			AddSingleMetaProperty ("FrobInert",
-				flag.Destination ());
+			AddMetaProperty ("M-Transparent", flag.Destination ());
 	}
 
 	if (!game) return;
@@ -1118,7 +1171,7 @@ cScr_ChessGame::ClearSelection ()
 void
 cScr_ChessGame::BeginComputing ()
 {
-	if (state == NONE) return;
+	if (!engine || state == NONE) return;
 	state = COMPUTING;
 	UpdateInterface ();
 
@@ -1138,7 +1191,7 @@ cScr_ChessGame::BeginComputing ()
 void
 cScr_ChessGame::FinishComputing ()
 {
-	if (state != COMPUTING || !game) return;
+	if (!engine || !game || state != COMPUTING) return;
 	state = NONE;
 
 	for (ScriptParamsIter opp (ObjId (), "Opponent"); opp; ++opp)
@@ -1156,7 +1209,7 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 {
 	if (!game || !move) return;
 	state = MOVING;
-	UpdateInterface ();
+	ClearSelection ();
 
 	try { game->MakeMove (move); }
 	CATCH_SCRIPT_FAILURE ("BeginMove", return)
@@ -1229,29 +1282,24 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 	}
 
 	UpdateSim ();
-
-	if (game->GetResult () == chess::Game::ONGOING)
-	{
-		// force move to eventually finish (could be sooner)
-		ulong max_duration = DUR_MOVE +
-			(captured_piece ? DUR_ATTACK : 0) +
-			(_promotion.Valid () ? DUR_PROMOTION : 0) +
-			(castling ? DUR_CASTLING_ROOK : 0);
-		SetTimedMessage ("FinishMove", max_duration, kSTM_OneShot);
-	}
 }
 
 void
 cScr_ChessGame::FinishMove ()
 {
 	if (!game || state != MOVING) return;
+
 	if (game->GetResult () != chess::Game::ONGOING)
-		state = NONE;
+		BeginEndgame ();
+
 	else if (engine && game->GetActiveSide () == chess::SIDE_BLACK)
 		BeginComputing ();
+
 	else
 	{
 		state = INTERACTIVE;
+		if (game->IsInCheck ())
+			AnnounceCheck ();
 		UpdateInterface ();
 	}
 }
@@ -1431,7 +1479,8 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 	catch (std::exception& e)
 	{
 		DebugString ("failed to prepare logbook: ", e.what ());
-		ShowString (chess::Translate ("logbook_problem").data (), 3000);
+		std::string message = chess::Translate ("logbook_problem");
+		ShowString (message.data (), CalcTextTime (message.data ()));
 		return;
 	}
 
@@ -1491,8 +1540,7 @@ cScr_ChessGame::ScriptFailure (const std::string& where,
 	SService<IDarkUISrv> pDUIS (g_pScriptManager);
 	pDUIS->ReadBook ("script-problem", "parch");
 
-	SService<IDarkGameSrv> pDGS (g_pScriptManager);
-	pDGS->EndMission ();
+	SetTimedMessage ("EndMission", 10, kSTM_OneShot);
 }
 
 
@@ -1842,10 +1890,10 @@ cScr_ChessPiece::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 		HeraldEvent ((const char*) pMsg->data);
 
 	else if (!strcmp (pMsg->message, "BeginThinking"))
-		{} //FIXME Do.
+		PlayMotion (ObjId (), MOTION_THINKING);
 
 	else if (!strcmp (pMsg->message, "FinishThinking"))
-		{} //FIXME Do.
+		PlayMotion (ObjId (), MOTION_THOUGHT);
 
 	return cScr_Fade::OnMessage (pMsg, mpReply);
 }

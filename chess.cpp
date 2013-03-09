@@ -502,16 +502,22 @@ Move::FromMLAN (const std::string& mlan, Side active_side)
 std::string
 Move::GetMLAN () const
 {
-	if (!Valid ()) return std::string ();
-	return GetPiece ().GetCode () + GetFrom ().GetCode () + '-' +
-		GetTo ().GetCode () + GetPromotion ().GetCode ();
+	std::string result;
+	if (!Valid ()) return result;
+	result = GetPiece ().GetCode () + GetFrom ().GetCode () + '-' +
+		GetTo ().GetCode ();
+	if (GetPromotion ().Valid ())
+		result += GetPromotion ().GetCode ();
+	return result;
 }
 
 std::string
 Move::GetUCICode () const
 {
-	return from.GetCode () + to.GetCode () +
-		Piece (SIDE_BLACK, promotion).GetCode ();
+	std::string result = from.GetCode () + to.GetCode ();
+	if (GetPromotion ().Valid ())
+		result += Piece (SIDE_BLACK, promotion).GetCode ();
+	return result;
 }
 
 std::string
@@ -565,10 +571,13 @@ Capture::FromMLAN (const std::string& mlan, Side active_side)
 std::string
 Capture::GetMLAN () const
 {
-	if (!Valid ()) return std::string ();
-	return GetPiece ().GetCode () + GetFrom ().GetCode () + 'x' +
-		captured_piece.GetCode () + GetTo ().GetCode () +
-		GetPromotion ().GetCode ();
+	std::string result;
+	if (!Valid ()) return result;
+	result = GetPiece ().GetCode () + GetFrom ().GetCode () + 'x' +
+		captured_piece.GetCode () + GetTo ().GetCode ();
+	if (GetPromotion ().Valid ())
+		result += GetPromotion ().GetCode ();
+	return result;
 }
 
 std::string
