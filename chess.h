@@ -146,7 +146,7 @@ struct Piece
 	void SetCode (char code);
 	static const char NONE_CODE;
 
-	std::string GetName () const;
+	std::string GetName (bool definite) const;
 
 	Rank GetInitialRank () const;
 

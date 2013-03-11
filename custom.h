@@ -330,8 +330,10 @@ private:
 
 	object GetPieceAt (const chess::Square& square);
 	object GetPieceAt (object square);
+
+	void ArrangeBoard (object origin, bool proxy);
 	object CreatePiece (object square, const chess::Piece& piece,
-		bool start_positioned);
+		bool start_positioned, bool proxy = false);
 
 	void UpdateRecord ();
 	void UpdateSim ();
@@ -348,7 +350,7 @@ private:
 	void FinishMove ();
 
 	void BeginEndgame ();
-	void FinishEndgame (int goal);
+	void FinishEndgame ();
 
 	void AnnounceCheck ();
 	void ShowEventMessage (const chess::EventConstPtr& event);
@@ -419,6 +421,14 @@ GEN_FACTORY("ChessClock","BaseScript",cScr_ChessClock)
 class cScr_ChessSquare : public virtual cBaseScript
 {
 public:
+	enum State
+	{
+		INACTIVE,
+		FRIENDLY_INERT,
+		CAN_MOVE_FROM,
+		CAN_MOVE_TO
+	};
+
 	cScr_ChessSquare (const char* pszName, int iHostObjId);
 
 protected:
@@ -427,17 +437,12 @@ protected:
 	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
 
 private:
-	object CreateDecal (char piece = chess::Piece::NONE_CODE);
+	object CreateDecal ();
 	object CreateButton ();
+	void DestroyAttachments ();
 
-	enum State
-	{
-		DISABLED,
-		ENABLED_FROM,
-		ENABLED_TO
-	};
 	script_int state; // State
-	script_int side; // chess::Side - only valid if state != DISABLED
+	script_int piece; // chess::Piece.GetCode ()
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)

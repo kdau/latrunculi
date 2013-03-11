@@ -262,10 +262,12 @@ const char
 Piece::CODES[N_SIDES][N_TYPES+1] = { "KQRBNP", "kqrbnp" };
 
 std::string
-Piece::GetName () const
+Piece::GetName (bool definite) const
 {
-	return Valid () ? Translate (std::string ("piece_") +
-				CODES[SIDE_BLACK][type], side)
+	return Valid ()
+		? Translate (std::string
+			(definite ? "piece_def_" : "piece_indef_") +
+			CODES[SIDE_BLACK][type], side)
 		: std::string ();
 }
 
@@ -525,10 +527,10 @@ Move::GetDescription () const
 {
 	return TranslateFormat (GetPromotion ().Valid ()
 				? "move_empty_promotion" : "move_empty",
-		GetPiece ().GetName ().data (),
+		GetPiece ().GetName (true).data (),
 		GetFrom ().GetCode ().data (),
 		GetTo ().GetCode ().data (),
-		GetPromotion ().GetName ().data ());
+		GetPromotion ().GetName (false).data ());
 }
 
 bool
@@ -585,11 +587,11 @@ Capture::GetDescription () const
 {
 	return TranslateFormat (GetPromotion ().Valid ()
 				? "move_capture_promotion" : "move_capture",
-		GetPiece ().GetName ().data (),
+		GetPiece ().GetName (true).data (),
 		GetFrom ().GetCode ().data (),
-		GetCapturedPiece ().GetName ().data (),
+		GetCapturedPiece ().GetName (true).data (),
 		GetTo ().GetCode ().data (),
-		GetPromotion ().GetName ().data ());
+		GetPromotion ().GetName (false).data ());
 }
 
 bool
@@ -641,9 +643,9 @@ std::string
 EnPassantCapture::GetDescription () const
 {
 	return TranslateFormat ("move_en_passant",
-		GetPiece ().GetName ().data (),
+		GetPiece ().GetName (true).data (),
 		GetFrom ().GetCode ().data (),
-		GetCapturedPiece ().GetName ().data (),
+		GetCapturedPiece ().GetName (true).data (),
 		GetCapturedSquare ().GetCode ().data (),
 		GetTo ().GetCode ().data ());
 }

@@ -691,7 +691,7 @@ cScr_Titled::OnWorldSelect (sScrMsg*, cMultiParm&)
 		std::string message = chess::Translate (msgid);
 		g_pMalloc->Free (msgid);
 		ShowString (message.data (),
-			CalcTextTime (message.data (), 250));
+			std::max (CalcTextTime (message.data (), 250), 1000));
 	}
 	return 0;
 }
@@ -859,15 +859,16 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 {
 	if (!pMsg->fStarting || !game) return 0;
 
-	// populate board with pieces
-	for (auto _square = chess::Square::BEGIN; _square.Valid (); ++_square)
+	if (object board_origin = StrToObject ("BoardOrigin"))
+		ArrangeBoard (board_origin, false);
+	else
 	{
-		chess::Piece _piece = game->GetPieceAt (_square);
-		object square = GetSquare (_square),
-			piece = GetPieceAt (square);
-		if (_piece.Valid () && square && !piece)
-			CreatePiece (square, _piece, true);
+		ScriptFailure ("OnSim", "missing board");
+		return 0;
 	}
+
+	if (object proxy_origin = StrToObject ("ProxyOrigin"))
+		ArrangeBoard (proxy_origin, true);
 
 	UpdateSim ();
 	SetTimedMessage ("HeraldBegin", 10, kSTM_OneShot);
@@ -923,6 +924,9 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 			CATCH_SCRIPT_FAILURE ("FiftyMove",)
 	}
 
+	else if (!strcmp (pMsg->message, "FinishEndgame"))
+		FinishEndgame ();
+
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
 
@@ -957,10 +961,6 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 			what = (const char*) pMsg->data;
 		EngineFailure ("BeginScript", what);
 	}
-
-	else if (!strcmp (pMsg->name, "FinishEndgame") &&
-			pMsg->data.type == kMT_Int)
-		FinishEndgame ((int) pMsg->data);
 
 	else if (!strcmp (pMsg->name, "EndMission"))
 	{
@@ -1017,14 +1017,52 @@ cScr_ChessGame::GetPieceAt (object square)
 		: object ();
 }
 
+void
+cScr_ChessGame::ArrangeBoard (object origin, bool proxy)
+{
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	object archetype = StrToObject ("ChessSquare");
+	if (!origin || !archetype) return;
+
+	cScrVec origin_position, origin_facing, rank_offset, file_offset;
+	pOS->Position (origin_position, origin);
+	pOS->Facing (origin_facing, origin);
+	rank_offset.x = GetObjectParamFloat (origin, "RankX", 0.0);
+	rank_offset.y = GetObjectParamFloat (origin, "RankY", 0.0);
+	file_offset.x = GetObjectParamFloat (origin, "FileX", 0.0);
+	file_offset.y = GetObjectParamFloat (origin, "FileY", 0.0);
+
+	for (auto _square = chess::Square::BEGIN; _square.Valid (); ++_square)
+	{
+		object square; pOS->Create (square, archetype);
+		if (!square) continue; // ???
+
+		std::string square_name = (proxy ? "Square" : "Proxy")
+			+ _square.GetCode ();
+		pOS->SetName (square, square_name.data ());
+
+		cScrVec position = origin_position
+			+ rank_offset * float (_square.rank)
+			+ file_offset * float (_square.file);
+		pOS->Teleport (square, position, origin_facing, 0);
+
+		chess::Piece _piece = game->GetPieceAt (_square);
+		if (_piece.Valid () && square)
+			CreatePiece (square, _piece, true, proxy);
+	}
+}
+
 object
 cScr_ChessGame::CreatePiece (object square, const chess::Piece& _piece,
-	bool start_positioned)
+	bool start_positioned, bool proxy)
 {
 	SService<IObjectSrv> pOS (g_pScriptManager);
 	char _archetype[128] = { 0 };
-	snprintf (_archetype, 128, "ChessPiece%c%d", _piece.GetCode (),
-		GetChessSet (_piece.side));
+	if (proxy)
+		snprintf (_archetype, 128, "ChessProxy%c", _piece.GetCode ());
+	else
+		snprintf (_archetype, 128, "ChessPiece%c%d", _piece.GetCode (),
+			GetChessSet (_piece.side));
 	object archetype = StrToObject (_archetype);
 	if (!archetype) return object ();
 
@@ -1097,21 +1135,32 @@ cScr_ChessGame::UpdateInterface ()
 {
 	ClearSelection ();
 
-	bool can_resign = state == INTERACTIVE && game &&
-		game->GetResult () == chess::Game::ONGOING &&
-		game->GetActiveSide () == chess::SIDE_WHITE;
+	bool have_ongoing_game =
+		game && game->GetResult () == chess::Game::ONGOING;
+	bool can_resign = state == INTERACTIVE && have_ongoing_game
+		&& game->GetActiveSide () == chess::SIDE_WHITE;
+	bool fifty_move = can_resign && game->GetFiftyMoveClock () >= 50;
+
 	for (ScriptParamsIter flag (ObjId (), "ResignFlag"); flag; ++flag)
 	{
-		if (can_resign)
+		if (can_resign && !fifty_move)
 			RemoveMetaProperty ("M-Transparent", flag.Destination ());
 		else
 			AddMetaProperty ("M-Transparent", flag.Destination ());
 	}
 
-	bool fifty_move = can_resign && game->GetFiftyMoveClock () >= 50;
 	for (ScriptParamsIter flag (ObjId (), "FiftyMoveFlag"); flag; ++flag)
 	{
 		if (fifty_move)
+			RemoveMetaProperty ("M-Transparent", flag.Destination ());
+		else
+			AddMetaProperty ("M-Transparent", flag.Destination ());
+	}
+
+	bool can_exit = state == NONE && !have_ongoing_game;
+	for (ScriptParamsIter flag (ObjId (), "ExitFlag"); flag; ++flag)
+	{
+		if (can_exit)
 			RemoveMetaProperty ("M-Transparent", flag.Destination ());
 		else
 			AddMetaProperty ("M-Transparent", flag.Destination ());
@@ -1123,11 +1172,17 @@ cScr_ChessGame::UpdateInterface ()
 	{
 		object square = GetSquare (_square);
 		if (!square) continue; // ???
-		bool can_move =
-			(state == INTERACTIVE) && LinkIter (square, 0, "Route");
-		SimpleSend (ObjId (), square,
-			can_move ? "EnableFrom" : "Disable",
-			game->GetPieceAt (_square).GetCode ());
+
+		chess::Piece piece = game->GetPieceAt (_square);
+		bool can_move = state == INTERACTIVE
+			&& LinkIter (square, 0, "Route");
+		bool is_friendly = state == INTERACTIVE
+			&& piece.side == game->GetActiveSide ();
+		SimpleSend (ObjId (), square, "UpdateState",
+			can_move ? cScr_ChessSquare::CAN_MOVE_FROM :
+				is_friendly ? cScr_ChessSquare::FRIENDLY_INERT :
+					cScr_ChessSquare::INACTIVE,
+			piece.GetCode ());
 	}
 }
 
@@ -1197,7 +1252,24 @@ cScr_ChessGame::FinishComputing ()
 	for (ScriptParamsIter opp (ObjId (), "Opponent"); opp; ++opp)
 		SimpleSend (ObjId (), opp.Destination (), "FinishThinking");
 
-	auto move = game->FindPossibleMove (engine->TakeBestMove ());
+	std::string best_move = engine->TakeBestMove ();
+
+	// Fruit non-portable
+	if (best_move.compare ("a1a1") == 0)
+	{
+		// the computer has resigned
+		if (game->GetResult () == chess::Game::ONGOING)
+			try
+			{
+				game->RecordLoss (chess::Loss::RESIGNATION,
+					chess::SIDE_BLACK);
+				BeginEndgame ();
+			}
+			CATCH_SCRIPT_FAILURE ("FinishComputing",)
+		return;
+	}
+
+	auto move = game->FindPossibleMove (best_move);
 	if (move)
 		BeginMove (move, true);
 	else
@@ -1215,8 +1287,12 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 	CATCH_SCRIPT_FAILURE ("BeginMove", return)
 	UpdateRecord ();
 
-	try { if (engine && !from_engine) engine->UpdatePosition (*game); }
-	CATCH_ENGINE_FAILURE ("BeginMove",)
+	// inform engine of player move, unless the game is now over
+	if (engine && !from_engine && game->GetResult () == chess::Game::ONGOING)
+	{
+		try { engine->UpdatePosition (*game); }
+		CATCH_ENGINE_FAILURE ("BeginMove",)
+	}
 
 	if (from_engine)
 	{
@@ -1312,6 +1388,14 @@ cScr_ChessGame::BeginEndgame ()
 		return;
 
 	state = NONE;
+
+	// don't need the engine anymore
+	if (engine)
+	{
+		try { delete engine; } catch (...) {}
+		engine = NULL;
+	}
+
 	UpdateSim ();
 	UpdateInterface ();
 
@@ -1322,7 +1406,6 @@ cScr_ChessGame::BeginEndgame ()
 		? NULL : game->GetHistory ().back ();
 	ShowEventMessage (event);
 
-	int goal = -1;
 	if (game->GetResult () == chess::Game::WON)
 	{
 		auto loss = std::dynamic_pointer_cast<const chess::Loss> (event);
@@ -1330,53 +1413,69 @@ cScr_ChessGame::BeginEndgame ()
 		{
 		case chess::Loss::CHECKMATE:
 			if (game->GetVictor () == chess::SIDE_WHITE)
-			{
 				HeraldEvent (chess::SIDE_WHITE, "win");
-				goal = 0; // checkmate black
-			}
 			else
-			{
 				HeraldEvent (chess::SIDE_WHITE, "mate");
-				goal = 1; // keep white out of checkmate
-			}
 			break;
 		case chess::Loss::RESIGNATION:
 			HeraldEvent (loss->GetSide (), "resign");
-			goal = 3; // don't resign
 			break;
 		case chess::Loss::TIME_CONTROL:
 			HeraldEvent (loss->GetSide (), "time");
-			goal = 2; // don't run out of time
 			break;
-		default: break; // ???
+		default:
+			break; // ???
 		}
 	}
 	else // chess::Game::DRAWN
-	{
 		HeraldEvent (chess::SIDE_NONE, "draw");
-		goal = 4; // don't draw
-	}
-
-	if (goal > -1)
-		SetTimedMessage ("FinishEndgame", 5000, kSTM_OneShot, goal);
 }
 
 void
-cScr_ChessGame::FinishEndgame (int goal)
+cScr_ChessGame::FinishEndgame ()
 {
-	if (goal > -1)
+	if (!game) return;
+	int goal = 1;
+
+	chess::EventConstPtr event = game->GetHistory ().empty ()
+		? NULL : game->GetHistory ().back ();
+	auto loss = std::dynamic_pointer_cast<const chess::Loss> (event);
+
+	switch (game->GetResult ())
 	{
-		SService<IQuestSrv> pQS (g_pScriptManager);
-		char goal_qvar[128] = { 0 };
-
-		snprintf (goal_qvar, 128, "goal_visible_%d", goal);
-		pQS->Set (goal_qvar, 1, kQuestDataMission);
-
-		snprintf (goal_qvar, 128, "goal_state_%d", goal);
-		pQS->Set (goal_qvar, (goal == 0) ? 1 : 3, kQuestDataMission);
+	case chess::Game::WON:
+		switch (loss ? loss->GetType () : chess::Loss::NONE)
+		{
+		case chess::Loss::CHECKMATE:
+			goal = (game->GetVictor () == chess::SIDE_WHITE)
+				? 0 // checkmate black
+				: 1; // keep white out of checkmate
+			break;
+		case chess::Loss::RESIGNATION:
+			goal = 3; // don't resign
+			break;
+		case chess::Loss::TIME_CONTROL:
+			goal = 2; // don't run out of time
+			break;
+		default:
+			return; // ???
+		}
+		break;
+	case chess::Game::DRAWN:
+		goal = 4; // don't draw
+		break;
+	default: // chess::Game::ONGOING - ???
+		return;
 	}
 
-	ShowLogbook ("pbook");
+	SService<IQuestSrv> pQS (g_pScriptManager);
+	char goal_qvar[128] = { 0 };
+
+	snprintf (goal_qvar, 128, "goal_visible_%d", goal);
+	pQS->Set (goal_qvar, 1, kQuestDataMission);
+
+	snprintf (goal_qvar, 128, "goal_state_%d", goal);
+	pQS->Set (goal_qvar, (goal == 0) ? 1 : 3, kQuestDataMission);
 }
 
 // for AnnounceCheck below
@@ -1418,9 +1517,11 @@ cScr_ChessGame::AnnounceCheck ()
 void
 cScr_ChessGame::ShowEventMessage (const chess::EventConstPtr& event)
 {
-	if (event)
-		ShowString (event->GetDescription ().data (), 3000,
-			GetChessSetColor (GetChessSet (event->GetSide ())));
+	if (!event) return;
+	std::string desc = event->GetDescription ();
+	if (desc.length () > 0) desc[0] = std::toupper (desc[0]);
+	ShowString (desc.data (), std::max (CalcTextTime (desc.data ()), 4000),
+		GetChessSetColor (GetChessSet (event->GetSide ())));
 }
 
 void
@@ -1452,6 +1553,7 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 		if (!pES->FindFileInPath ("resname_base", "books\\logbook.str",
 		    path))
 			throw std::runtime_error ("missing logbook file");
+		DebugPrintf ("ShowLogbook found logbook file at '%s'; writing it there...", (const char*) path); //FIXME XBETA
 		std::ofstream logbook (path);
 
 		unsigned halfmove = 0, page = 0;
@@ -1466,14 +1568,19 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 				logbook << chess::Game::GetLogbookHeading (page)
 					<< std::endl << std::endl;
 			}
+			std::string desc = event->GetDescription ();
+			if (desc.length () > 0) desc[0] = std::toupper (desc[0]);
+			DebugPrintf ("...writing event [%s]: '%s'.", event->GetMLAN ().data (), desc.data ()); //FIXME XBETA
 			logbook << chess::Game::GetHalfmovePrefix (halfmove)
-				<< event->GetDescription ()
-				<< std::endl << std::endl;
+				<< desc << std::endl << std::endl;
 			++halfmove;
 		}
 		if (game->GetHistory ().empty ())
+		{
+			DebugString ("...game history is empty; writing blank header."); //FIXME XBETA
 			logbook << "page_0: \""
 				<< chess::Game::GetLogbookHeading (1);
+		}
 		logbook << "\"" << std::endl;
 	}
 	catch (std::exception& e)
@@ -1484,6 +1591,7 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 		return;
 	}
 
+	DebugString ("...done writing file; displaying book."); //FIXME XBETA
 	SService<IDarkUISrv> pDUIS (g_pScriptManager);
 	pDUIS->ReadBook ("logbook", art.data ());
 }
@@ -1579,10 +1687,11 @@ long
 cScr_ChessClock::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
 	cBaseScript::OnMessage (pMsg, mpReply);
-	if (!!strcmp (pMsg->message, "StopTheClock")) return 0;
+	if (!!strcmp (pMsg->message, "StopTheClock") ||
+		time_total == 0) return 0;
 
 	time_total = 0;
-	AddSingleMetaProperty ("FrobInert", ObjId ());
+	AddSingleMetaProperty ("FrobInertFocusable", ObjId ());
 	SService<IPropertySrv> pPS (g_pScriptManager);
 	pPS->Remove (ObjId (), "AmbientHacked");
 
@@ -1620,6 +1729,7 @@ cScr_ChessClock::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 	// notify if time has run out
 	if (time_remaining <= 0)
 	{
+		time_total = 0;
 		AddSingleMetaProperty ("FrobInert", ObjId ());
 		pPS->Remove (ObjId (), "AmbientHacked");
 		PlaySchema (ObjId (), StrToObject ("button_rmz"), ObjId ());
@@ -1672,47 +1782,36 @@ cScr_ChessClock::ShowTimeRemaining ()
 cScr_ChessSquare::cScr_ChessSquare (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
 	  SCRIPT_VAROBJ (ChessSquare, state, iHostObjId),
-	  SCRIPT_VAROBJ (ChessSquare, side, iHostObjId)
+	  SCRIPT_VAROBJ (ChessSquare, piece, iHostObjId)
 {}
 
 long
 cScr_ChessSquare::OnBeginScript (sScrMsg*, cMultiParm&)
 {
-	state.Init (DISABLED);
-	side.Init (chess::SIDE_NONE);
+	state.Init (INACTIVE);
+	piece.Init (chess::Piece::NONE_CODE);
 	return 0;
 }
 
 long
 cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	if (!strcmp (pMsg->message, "EnableFrom") &&
+	if (!strcmp (pMsg->message, "UpdateState") &&
 		pMsg->data.type == kMT_Int)
 	{
-		chess::Piece piece ((int) pMsg->data);
-		state = ENABLED_FROM;
-		side = piece.side;
-		CreateDecal (piece.GetCode ());
-		CreateButton ();
-	}
+		state = (int) pMsg->data;
 
-	else if (!strcmp (pMsg->message, "EnableTo") &&
-	         pMsg->data.type == kMT_Int)
-	{
-		state = ENABLED_TO;
-		side = (int) pMsg->data;
-		CreateDecal ();
-		CreateButton ();
-	}
+		if (pMsg->data2.type == kMT_Int)
+			piece = (int) pMsg->data2;
+		// otherwise the piece hasn't changed
 
-	else if (!strcmp (pMsg->message, "Disable"))
-	{
-		state = DISABLED;
-		side = chess::SIDE_NONE;
-		for (ScriptParamsIter bttn (ObjId (), "Button"); bttn; ++bttn)
-			SimpleSend (ObjId (), bttn.Destination (), "FadeAway");
-		for (ScriptParamsIter decal (ObjId (), "Decal"); decal; ++decal)
-			SimpleSend (ObjId (), decal.Destination (), "FadeAway");
+		DestroyAttachments ();
+		if (state != INACTIVE)
+		{
+			CreateDecal ();
+			if (state != FRIENDLY_INERT)
+				CreateButton ();
+		}
 	}
 
 	else if (!strcmp (pMsg->message, "Select"))
@@ -1728,24 +1827,26 @@ cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 			SimpleSend (ObjId (), piece.Destination (), "Select");
 
 		for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
-			SimpleSend (ObjId (), move.Destination (), "EnableTo",
-				chess::Opponent ((chess::Side) (int) side));
+			SimpleSend (ObjId (), move.Destination (),
+				"UpdateState", CAN_MOVE_TO,
+				(int) piece);
 	}
 
 	else if (!strcmp (pMsg->message, "Deselect"))
 	{
 		for (ScriptParamsIter bttn (ObjId (), "Button"); bttn; ++bttn)
 		{
+			SimpleSend (ObjId (), bttn.Destination (), "TurnOff");
 			RemoveSingleMetaProperty ("M-SelectedSquare",
 				bttn.Destination ());
-			SimpleSend (ObjId (), bttn.Destination (), "TurnOff");
 		}
 
 		for (LinkIter piece (ObjId (), 0, "Population"); piece; ++piece)
 			SimpleSend (ObjId (), piece.Destination (), "Deselect");
 
 		for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
-			SimpleSend (ObjId (), move.Destination (), "Disable");
+			SimpleSend (ObjId (), move.Destination (),
+				"UpdateState", INACTIVE, chess::Piece::NONE_CODE);
 	}
 
 	return cBaseScript::OnMessage (pMsg, mpReply);
@@ -1754,13 +1855,13 @@ cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 long
 cScr_ChessSquare::OnTurnOn (sScrMsg*, cMultiParm&)
 {
-	if (state == ENABLED_FROM)
+	if (state == CAN_MOVE_FROM)
 	{
 		PlaySchemaAmbient (ObjId (), StrToObject ("bow_begin"));
 		SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectFrom");
 	}
 
-	else if (state == ENABLED_TO)
+	else if (state == CAN_MOVE_TO)
 	{
 		PlaySchemaAmbient (ObjId (), StrToObject ("pickup_gem"));
 		SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectTo");
@@ -1770,15 +1871,23 @@ cScr_ChessSquare::OnTurnOn (sScrMsg*, cMultiParm&)
 }
 
 object
-cScr_ChessSquare::CreateDecal (char piece)
+cScr_ChessSquare::CreateDecal ()
 {
 	SService<IObjectSrv> pOS (g_pScriptManager);
 	object decal; pOS->Create (decal, StrToObject ("ChessDecal"));
 	if (!decal) return decal;
 
+	chess::Piece _piece (piece);
+	if (state == CAN_MOVE_TO)
+	{
+		_piece.type = chess::Piece::NONE;
+		_piece.side = chess::Opponent (_piece.side);
+	}
+
 	char texture[128] = { 0 };
-	snprintf (texture, 128, "obj/txt16/decal-%c%d", piece ? piece : 'z',
-		GetChessSet ((chess::Side) (int) side));
+	snprintf (texture, 128, "obj/txt16/decal-%c%d",
+		_piece.Valid () ? _piece.GetCode () : 'z',
+		state == FRIENDLY_INERT ? 0 : GetChessSet (_piece.side));
 
 	SService<IPropertySrv> pPS (g_pScriptManager);
 	pPS->SetSimple (decal, "OTxtRepr0", texture);
@@ -1788,7 +1897,7 @@ cScr_ChessSquare::CreateDecal (char piece)
 
 	cScrVec position, facing; pOS->Position (position, ObjId ());
 	position.z += GetObjectParamFloat (ObjId (), "DecalZ");
-	facing.z = 180.0 + 90.0 * chess::SideFacing ((chess::Side) (int) side);
+	facing.z = 180.0 + 90.0 * chess::SideFacing (_piece.side);
 	pOS->Teleport (decal, position, facing, 0);
 
 	return decal;
@@ -1797,13 +1906,20 @@ cScr_ChessSquare::CreateDecal (char piece)
 object
 cScr_ChessSquare::CreateButton ()
 {
+	chess::Piece _piece (piece);
+	if (state == CAN_MOVE_TO)
+	{
+		_piece.type = chess::Piece::NONE;
+		_piece.side = chess::Opponent (_piece.side);
+	}
+
 	char _archetype[128] = { 0 };
-	snprintf (_archetype, 128, "ChessButton%d",
-		GetChessSet ((chess::Side) (int) side));
+	snprintf (_archetype, 128, "ChessButton%d", GetChessSet (_piece.side));
 
 	SService<IObjectSrv> pOS (g_pScriptManager);
 	object archetype = StrToObject (_archetype);
 	if (!archetype) return object ();
+
 	object button; pOS->Create (button, archetype);
 	if (!button) return button;
 
@@ -1813,14 +1929,22 @@ cScr_ChessSquare::CreateButton ()
 
 	cScrVec position, facing; pOS->Position (position, ObjId ());
 	position.z += GetObjectParamFloat (ObjId (), "ButtonZ");
-	if (state == ENABLED_FROM)
-		facing.z = 180.0 + 90.0 *
-			chess::SideFacing ((chess::Side) (int) side);
-	else // ENABLED_TO
+	if (state == CAN_MOVE_FROM)
+		facing.z = 180.0 + 90.0 * chess::SideFacing (_piece.side);
+	else // CAN_MOVE_TO
 		facing.y = 90.0;
 	pOS->Teleport (button, position, facing, 0);
 
 	return button;
+}
+
+void
+cScr_ChessSquare::DestroyAttachments ()
+{
+	for (ScriptParamsIter button (ObjId (), "Button"); button; ++button)
+		SimpleSend (ObjId (), button.Destination (), "FadeAway");
+	for (ScriptParamsIter decal (ObjId (), "Decal"); decal; ++decal)
+		SimpleSend (ObjId (), decal.Destination (), "FadeAway");
 }
 
 
