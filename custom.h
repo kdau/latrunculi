@@ -325,10 +325,10 @@ protected:
 	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 
 private:
-	object GetSquare (const chess::Square& square);
+	object GetSquare (const chess::Square& square, bool proxy = false);
 	chess::Square GetSquare (object square);
 
-	object GetPieceAt (const chess::Square& square);
+	object GetPieceAt (const chess::Square& square, bool proxy = false);
 	object GetPieceAt (object square);
 
 	void ArrangeBoard (object origin, bool proxy);
@@ -348,6 +348,7 @@ private:
 
 	void BeginMove (const chess::MovePtr& move, bool from_engine);
 	void FinishMove ();
+	void PlaceProxy (object proxy, object square);
 
 	void BeginEndgame ();
 	void FinishEndgame ();

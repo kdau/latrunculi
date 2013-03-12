@@ -986,9 +986,10 @@ cScr_ChessGame::OnTurnOn (sScrMsg* pMsg, cMultiParm&)
 }
 
 object
-cScr_ChessGame::GetSquare (const chess::Square& square)
+cScr_ChessGame::GetSquare (const chess::Square& square, bool proxy)
 {
-	std::string square_name = "Square" + square.GetCode ();
+	std::string square_name =
+		(proxy ? "Proxy" : "Square") + square.GetCode ();
 	return StrToObject (square_name.data ());
 }
 
@@ -1004,9 +1005,9 @@ cScr_ChessGame::GetSquare (object square)
 }
 
 object
-cScr_ChessGame::GetPieceAt (const chess::Square& square)
+cScr_ChessGame::GetPieceAt (const chess::Square& square, bool proxy)
 {
-	return GetPieceAt (GetSquare (square));
+	return GetPieceAt (GetSquare (square, proxy));
 }
 
 object
@@ -1037,7 +1038,7 @@ cScr_ChessGame::ArrangeBoard (object origin, bool proxy)
 		object square; pOS->Create (square, archetype);
 		if (!square) continue; // ???
 
-		std::string square_name = (proxy ? "Square" : "Proxy")
+		std::string square_name = (proxy ? "Proxy" : "Square")
 			+ _square.GetCode ();
 		pOS->SetName (square, square_name.data ());
 
@@ -1080,8 +1081,13 @@ cScr_ChessGame::CreatePiece (object square, const chess::Piece& _piece,
 
 	if (start_positioned)
 	{
-		SimpleSend (ObjId (), piece, "FadeIn");
-		SimpleSend (ObjId (), piece, "Reposition");
+		if (proxy)
+			PlaceProxy (piece, square);
+		else
+		{
+			SimpleSend (ObjId (), piece, "FadeIn");
+			SimpleSend (ObjId (), piece, "Reposition");
+		}
 	}
 
 	return piece;
@@ -1308,11 +1314,21 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 		return;
 	}
 
+	object piece_proxy = GetPieceAt (move->GetFrom (), true),
+		to_proxy = GetSquare (move->GetTo (), true);
+	if (piece_proxy && to_proxy)
+		PlaceProxy (piece_proxy, to_proxy);
+
 	object captured_square, captured_piece;
 	if (auto capture = std::dynamic_pointer_cast<const chess::Capture> (move))
 	{
 		captured_square = GetSquare (capture->GetCapturedSquare ());
 		captured_piece = GetPieceAt (captured_square);
+
+		object captured_proxy =
+			GetPieceAt (capture->GetCapturedSquare (), true);
+		if (captured_proxy)
+			SimpleSend (ObjId (), captured_proxy, "FadeAway");
 	}
 
 	auto castling = std::dynamic_pointer_cast<const chess::Castling> (move);
@@ -1331,6 +1347,11 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 
 		// the rook will bow to the king after they're in place
 		CreateLink ("ScriptParams", rook, piece, "MyLiege");
+
+		object rook_proxy = GetPieceAt (castling->GetRookFrom (), true),
+			rook_to_proxy = GetSquare (castling->GetRookTo (), true);
+		if (rook_proxy && rook_to_proxy)
+			PlaceProxy (rook_proxy, rook_to_proxy);
 	}
 
 	DestroyLink (LinkIter (from, piece, "Population"));
@@ -1355,6 +1376,12 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 		DestroyLink (LinkIter (to, piece, "Population"));
 		object promotion = CreatePiece (to, _promotion, false);
 		SimpleSend (ObjId (), piece, "BePromoted", promotion);
+
+		if (piece_proxy && to_proxy)
+		{
+			SimpleSend (ObjId (), piece_proxy, "FadeAway");
+			CreatePiece (to_proxy, _promotion, true, true);
+		}
 	}
 
 	UpdateSim ();
@@ -1378,6 +1405,23 @@ cScr_ChessGame::FinishMove ()
 			AnnounceCheck ();
 		UpdateInterface ();
 	}
+}
+
+void
+cScr_ChessGame::PlaceProxy (object proxy, object square)
+{
+	if (!proxy || !square) return;
+
+	for (LinkIter pop (0, proxy, "Population"); pop; ++pop)
+		DestroyLink (pop);
+	CreateLink ("Population", square, proxy);
+
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	cScrVec position; pOS->Position (position, square);
+	cScrVec facing (0.0, 0.0,
+		// proxy boards are mirror images of real boards, so use -90*SF
+		90.0 - 90.0 * chess::SideFacing (GetSide (proxy)));
+	pOS->Teleport (proxy, position, facing, 0);
 }
 
 void
