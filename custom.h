@@ -42,11 +42,13 @@ COLORREF GetChessSetColor (int set);
 
 enum CustomMotion
 {
-	MOTION_BOW_TO_KING,
-	MOTION_PLAY_HORN,
-	MOTION_THINKING,
-	MOTION_THOUGHT,
-	MOTION_TURN
+	MOTION_NONE = -1,
+	MOTION_BOW_TO_KING,	// rook - bipeds and pseudo-bipeds only
+	MOTION_PLAY_HORN,	// herald - bipeds only
+	MOTION_THINKING,	// herald - bipeds only
+	MOTION_THOUGHT,		// herald - bipeds only
+	MOTION_FACE_ENEMY,	// all - all types
+	N_MOTIONS
 };
 bool PlayMotion (object ai, CustomMotion motion);
 
@@ -274,6 +276,7 @@ public:
 
 protected:
 	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessIntro","BaseScript",cScr_ChessIntro)
@@ -458,14 +461,6 @@ GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
  * Coordinates the activity of an AI chess piece with the ChessGame ("TheGame").
  */
 #if !SCR_GENSCRIPTS
-enum GoType
-{
-	GO_NONE = 0,
-	GO_PRIMARY,
-	GO_CASTLING_ROOK,
-	GO_ATTACK
-};
-
 class cScr_ChessPiece : public virtual cBaseAIScript, public cScr_Fade
 {
 public:
@@ -477,22 +472,25 @@ protected:
 	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnObjActResult (sAIObjActResultMsg* pMsg,
 		cMultiParm& mpReply);
+	virtual long OnSlain (sSlayMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnAIModeChange (sAIModeChangeMsg* pMsg,
 		cMultiParm& mpReply);
 
 private:
 	void Reposition (object square = object ());
+	void CreateAwareness (object target, uint time);
 
-	void GoToSquare (object square, GoType type);
+	void GoToSquare (object square);
 	void ArriveAtSquare (uint time);
-	script_int going_to_square, go_type; // object, GoType
+	script_int going_to_square; // object
 
 	void AttackPiece (object piece, uint time);
 	void MaintainAttack (uint time);
 	void FinishAttack ();
 	script_int attacking_piece; // object
 
-	void BeAttacked (object attacker);
+	void BecomeVictim (object attacker, uint time);
+	void BeAttacked (object attacker, uint time);
 	void Die ();
 	void BeginBurial ();
 	void FinishBurial ();
@@ -508,6 +506,27 @@ private:
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessPiece","Fade",cScr_ChessPiece)
+#endif // SCR_GENSCRIPTS
+
+
+
+/**
+ * Script: ChessCorpse
+ * Inherits: ChessPiece
+ *
+ * Buries a chess piece's corpse.
+ */
+#if !SCR_GENSCRIPTS
+class cScr_ChessCorpse : public virtual cScr_ChessPiece
+{
+public:
+	cScr_ChessCorpse (const char* pszName, int iHostObjId);
+
+protected:
+	virtual long OnCreate (sScrMsg* pMsg, cMultiParm& mpReply);
+};
+#else // SCR_GENSCRIPTS
+GEN_FACTORY("ChessCorpse","ChessPiece",cScr_ChessCorpse)
 #endif // SCR_GENSCRIPTS
 
 

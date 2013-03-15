@@ -93,22 +93,29 @@ GetChessSetColor (int set)
 }
 
 bool
-PlayMotion (object ai, CustomMotion _motion)
+PlayMotion (object ai, CustomMotion motion)
 {
-	const char* motion = NULL;
-	switch (_motion)
+	static const char* schemas[] =
 	{
-	case MOTION_BOW_TO_KING: motion = "humsalute3"; break;
-	case MOTION_PLAY_HORN: motion = "humgulp"; break;
-	case MOTION_THINKING: motion = "bh112003"; break;
-	case MOTION_THOUGHT: motion = "bh112550"; break;
-	case MOTION_TURN: motion = "bh111o48"; break;
-	default: return false;
+		"humsalute3", // MOTION_BOW_TO_KING
+		"humgulp", // MOTION_PLAY_HORN
+		"bh112003", // MOTION_THINKING
+		"bh112550", // MOTION_THOUGHT
+		NULL // MOTION_FACE_ENEMY - done with signal
+	};
+
+	if (motion == MOTION_FACE_ENEMY)
+	{
+		SService<IAIScrSrv> pAIS (g_pScriptManager);
+		pAIS->Signal (ai, "FaceEnemy");
+		return true;
 	}
+	else if (motion <= MOTION_NONE || motion >= N_MOTIONS)
+		return false;
 
 	SService<IPuppetSrv> pPuS (g_pScriptManager);
 	true_bool result;
-	pPuS->PlayMotion (result, ai, motion);
+	pPuS->PlayMotion (result, ai, schemas[motion]);
 	return result;
 }
 
@@ -222,8 +229,8 @@ ScriptParamsIter::ScriptParamsIter (object source, const char* _data,
 	: LinkIter (source, destination, "ScriptParams"),
 	  data (_data), only ()
 {
-	if (!source)
-		throw std::invalid_argument ("invalid source object");
+	if (!source && !destination)
+		throw std::invalid_argument ("invalid source/destination");
 	if (_data && !strcmp (_data, "Self"))
 		only = source;
 	else if (_data && !strcmp (_data, "Player"))
@@ -597,7 +604,10 @@ cScr_Fade::Fade ()
 	for (LinkIter phys (0, ObjId (), "PhysAttach"); phys; ++phys)
 		pPS->SetSimple (phys.Source (), "RenderAlpha", opacity);
 
-	if ((state == FADING_IN) ? (opacity < 0.96) : (opacity > 0.04))
+	float max_opacity = GetObjectParamFloat (ObjId (), "MaxOpacity", 1.0);
+	if ((state == FADING_IN)
+		? (opacity < max_opacity - 0.04)
+		: (opacity > 0.04))
 	{
 		unsigned delay =
 			GetObjectParamInt (ObjId (), "FadeTime", 1000) / 20;
@@ -605,9 +615,10 @@ cScr_Fade::Fade ()
 	}
 	else
 	{
-		state = NONE;
 		if (state == FADING_AWAY)
 			DestroyObject (ObjId ());
+		else
+			state = NONE;
 	}
 }
 
@@ -720,8 +731,39 @@ cScr_ChessIntro::OnSim (sSimMsg* pMsg, cMultiParm&)
 		     door; ++door)
 			DestroyObject (door);
 
-		DestroyObject (ObjId ());
+		SService<IPropertySrv> pPS (g_pScriptManager);
+		pPS->SetSimple (ObjId (), "Book", "welcome");
 	}
+	return 0;
+}
+
+long
+cScr_ChessIntro::OnTurnOn (sScrMsg* pMsg, cMultiParm&)
+{
+	// send ourself away, but continue to exist for later effects
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	pOS->Teleport (ObjId (), { 0, 0, 0 }, { 0, 0, 0 }, 0);
+
+	for (ScriptParamsIter gem (ObjId (), "Scenario"); gem; ++gem)
+	{
+		if (gem.Destination () != pMsg->from)
+			SimpleSend (ObjId (), gem.Destination (), "TurnOff");
+		AddSingleMetaProperty ("FrobInert", gem.Destination ());
+	}
+
+/*FIXME To be implemented in a later beta version.
+	for (ScriptParamsIter door (ObjId (), "EntryDoor"); door; ++door)
+		SimpleSend (ObjId (), door.Destination (), "Open");
+
+	object herald = ScriptParamsIter (ObjId (), "TheHerald").Destination ();
+	for (ScriptParamsIter other (ObjId (), "Herald"); other; ++other)
+		if (other.Destination () != herald)
+			DestroyObject (other);
+ */
+
+	SService<IQuestSrv> pQS (g_pScriptManager);
+	pQS->Set ("goal_state_0", 1, kQuestDataMission);
+
 	return 0;
 }
 
@@ -754,14 +796,17 @@ cScr_ChessScenario::OnWorldSelect (sScrMsg*, cMultiParm&)
 long
 cScr_ChessScenario::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 {
-	AddSingleMetaProperty ("FrobInert", ObjId ());
+	object intro = StrToObject ("TheIntro");
+	PlaySchemaAmbient (ObjId (), StrToObject ("pickup_gem"));
 
 	SService<IDarkGameSrv> pDGS (g_pScriptManager);
 	pDGS->SetNextMission (GetObjectParamInt (ObjId (), "Mission", 21));
 
-	SService<IQuestSrv> pQS (g_pScriptManager);
-	pQS->Set ("goal_state_0", 1, kQuestDataMission);
+	for (ScriptParamsIter herald (ObjId (), "Herald"); herald; ++herald)
+		CreateLink ("ScriptParams", intro, herald.Destination (),
+			"TheHerald");
 
+	SimpleSend (ObjId (), intro, "TurnOn");
 	return 0;
 }
 
@@ -1079,16 +1124,15 @@ cScr_ChessGame::CreatePiece (object square, const chess::Piece& _piece,
 
 	CreateLink ("Population", square, piece);
 
-	if (start_positioned)
+	if (proxy)
+		PlaceProxy (piece, square);
+	else if (start_positioned)
 	{
-		if (proxy)
-			PlaceProxy (piece, square);
-		else
-		{
-			SimpleSend (ObjId (), piece, "FadeIn");
-			SimpleSend (ObjId (), piece, "Reposition");
-		}
+		SimpleSend (ObjId (), piece, "FadeIn");
+		SimpleSend (ObjId (), piece, "Reposition");
 	}
+	else
+		PlayMotion (piece, MOTION_FACE_ENEMY);
 
 	return piece;
 }
@@ -1314,11 +1358,6 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 		return;
 	}
 
-	object piece_proxy = GetPieceAt (move->GetFrom (), true),
-		to_proxy = GetSquare (move->GetTo (), true);
-	if (piece_proxy && to_proxy)
-		PlaceProxy (piece_proxy, to_proxy);
-
 	object captured_square, captured_piece;
 	if (auto capture = std::dynamic_pointer_cast<const chess::Capture> (move))
 	{
@@ -1328,7 +1367,16 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 		object captured_proxy =
 			GetPieceAt (capture->GetCapturedSquare (), true);
 		if (captured_proxy)
+		{
+			DestroyLink (LinkIter (0, captured_proxy, "Population"));
 			SimpleSend (ObjId (), captured_proxy, "FadeAway");
+		}
+
+		// increment the pieces-taken statistics
+		const char* statistic = (move->GetSide () == chess::SIDE_WHITE)
+			? "stat_enemy_pieces" : "stat_own_pieces";
+		SService<IQuestSrv> pQS (g_pScriptManager);
+		pQS->Set (statistic, pQS->Get (statistic) + 1, kQuestDataMission);
 	}
 
 	auto castling = std::dynamic_pointer_cast<const chess::Castling> (move);
@@ -1356,29 +1404,34 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 
 	DestroyLink (LinkIter (from, piece, "Population"));
 	CreateLink ("Population", to, piece);
-	SimpleSend (ObjId (), piece, "GoToSquare",
-		captured_piece ? captured_square : to,
-		captured_piece ? GO_ATTACK : GO_PRIMARY);
+
+	object piece_proxy = GetPieceAt (move->GetFrom (), true),
+		to_proxy = GetSquare (move->GetTo (), true);
+	if (piece_proxy && to_proxy)
+		PlaceProxy (piece_proxy, to_proxy);
 
 	if (captured_piece)
 	{
-		for (LinkIter pop (0, captured_piece, "Population"); pop; ++pop)
-			DestroyLink (pop);
+		DestroyLink (LinkIter (0, captured_piece, "Population"));
+		SimpleSend (piece, captured_piece, "BecomeVictim");
 
-		// The piece will send BeAttacked to the captured_piece, and
-		//    will proceed to its final square after the attack.
 		SimpleSend (ObjId (), piece, "AttackPiece", captured_piece);
+		// The piece will proceed to its final square after the attack.
 	}
+	else
+		SimpleSend (ObjId (), piece, "GoToSquare", to);
 
 	chess::Piece _promotion = move->GetPromotion ();
 	if (_promotion.Valid ())
 	{
+		CreateLink ("ScriptParams", to, piece, "ExPopulation");
 		DestroyLink (LinkIter (to, piece, "Population"));
 		object promotion = CreatePiece (to, _promotion, false);
 		SimpleSend (ObjId (), piece, "BePromoted", promotion);
 
 		if (piece_proxy && to_proxy)
 		{
+			DestroyLink (LinkIter (0, piece_proxy, "Population"));
 			SimpleSend (ObjId (), piece_proxy, "FadeAway");
 			CreatePiece (to_proxy, _promotion, true, true);
 		}
@@ -1411,16 +1464,19 @@ void
 cScr_ChessGame::PlaceProxy (object proxy, object square)
 {
 	if (!proxy || !square) return;
+	SService<IObjectSrv> pOS (g_pScriptManager);
 
-	for (LinkIter pop (0, proxy, "Population"); pop; ++pop)
-		DestroyLink (pop);
+	DestroyLink (LinkIter (0, proxy, "Population"));
 	CreateLink ("Population", square, proxy);
 
-	SService<IObjectSrv> pOS (g_pScriptManager);
+	static const float SCALE_Z = 0.07; // ugh, the property won't read
 	cScrVec position; pOS->Position (position, square);
-	cScrVec facing (0.0, 0.0,
-		// proxy boards are mirror images of real boards, so use -90*SF
-		90.0 - 90.0 * chess::SideFacing (GetSide (proxy)));
+	position.z += GetObjectParamFloat (proxy, "Height", 0.0) / 2.0 * SCALE_Z;
+
+	cScrVec facing = { 0.0, 0.0, 180.0 };
+	// proxy boards are mirror images of real boards, so subtract
+	facing.z -= 90.0 * chess::SideFacing (GetSide (proxy));
+
 	pOS->Teleport (proxy, position, facing, 0);
 }
 
@@ -1597,7 +1653,6 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 		if (!pES->FindFileInPath ("resname_base", "books\\logbook.str",
 		    path))
 			throw std::runtime_error ("missing logbook file");
-		DebugPrintf ("ShowLogbook found logbook file at '%s'; writing it there...", (const char*) path); //FIXME XBETA
 		std::ofstream logbook (path);
 
 		unsigned halfmove = 0, page = 0;
@@ -1614,17 +1669,13 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 			}
 			std::string desc = event->GetDescription ();
 			if (desc.length () > 0) desc[0] = std::toupper (desc[0]);
-			DebugPrintf ("...writing event [%s]: '%s'.", event->GetMLAN ().data (), desc.data ()); //FIXME XBETA
 			logbook << chess::Game::GetHalfmovePrefix (halfmove)
 				<< desc << std::endl << std::endl;
 			++halfmove;
 		}
 		if (game->GetHistory ().empty ())
-		{
-			DebugString ("...game history is empty; writing blank header."); //FIXME XBETA
 			logbook << "page_0: \""
 				<< chess::Game::GetLogbookHeading (1);
-		}
 		logbook << "\"" << std::endl;
 	}
 	catch (std::exception& e)
@@ -1635,9 +1686,8 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 		return;
 	}
 
-	DebugString ("...done writing file; displaying book."); //FIXME XBETA
-	SService<IDarkUISrv> pDUIS (g_pScriptManager);
-	pDUIS->ReadBook ("logbook", art.data ());
+	SService<IDebugScrSrv> pDbS (g_pScriptManager);
+	pDbS->Command ("test_book_ex", "logbook,", art.data (), "", "", "", "", "");
 }
 
 void
@@ -2000,7 +2050,6 @@ cScr_ChessPiece::cScr_ChessPiece (const char* pszName, int iHostObjId)
 	  cBaseAIScript (pszName, iHostObjId),
 	  cScr_Fade (pszName, iHostObjId),
 	  SCRIPT_VAROBJ (ChessPiece, going_to_square, iHostObjId),
-	  SCRIPT_VAROBJ (ChessPiece, go_type, iHostObjId),
 	  SCRIPT_VAROBJ (ChessPiece, attacking_piece, iHostObjId),
 	  SCRIPT_VAROBJ (ChessPiece, being_attacked_by, iHostObjId),
 	  SCRIPT_VAROBJ (ChessPiece, being_promoted_to, iHostObjId)
@@ -2010,7 +2059,6 @@ long
 cScr_ChessPiece::OnBeginScript (sScrMsg*, cMultiParm&)
 {
 	going_to_square.Init (0);
-	go_type.Init (GO_NONE);
 	attacking_piece.Init (0);
 	being_attacked_by.Init (0);
 	being_promoted_to.Init (0);
@@ -2038,16 +2086,18 @@ cScr_ChessPiece::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 	}
 
 	else if (!strcmp (pMsg->message, "GoToSquare") &&
-			pMsg->data.type == kMT_Int &&
-			pMsg->data2.type == kMT_Int)
-		GoToSquare ((int) pMsg->data, (GoType) (int) pMsg->data2);
+			pMsg->data.type == kMT_Int)
+		GoToSquare ((int) pMsg->data);
 
 	else if (!strcmp (pMsg->message, "AttackPiece") &&
 			pMsg->data.type == kMT_Int)
 		AttackPiece ((int) pMsg->data, pMsg->time);
 
+	else if (!strcmp (pMsg->message, "BecomeVictim"))
+		BecomeVictim (pMsg->from, pMsg->time);
+
 	else if (!strcmp (pMsg->message, "BeAttacked"))
-		BeAttacked (pMsg->from);
+		BeAttacked (pMsg->from, pMsg->time);
 
 	else if (!strcmp (pMsg->message, "BePromoted") &&
 			pMsg->data.type == kMT_Int)
@@ -2078,8 +2128,11 @@ cScr_ChessPiece::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 	else if (!strcmp (pMsg->name, "FinishAttack"))
 		FinishAttack ();
 
-	else if (!strcmp (pMsg->name, "Die"))
-		Die ();
+	else if (!strcmp (pMsg->name, "ForceDie"))
+	{
+		SService<IDamageSrv> pDaS (g_pScriptManager);
+		pDaS->Slay (ObjId (), (int) being_attacked_by);
+	}
 
 	else if (!strcmp (pMsg->name, "BeginBurial"))
 		BeginBurial ();
@@ -2115,6 +2168,14 @@ cScr_ChessPiece::OnObjActResult (sAIObjActResultMsg* pMsg, cMultiParm&)
 }
 
 long
+cScr_ChessPiece::OnSlain (sSlayMsg*, cMultiParm&)
+{
+	if (being_attacked_by != 0)
+		Die ();
+	return 0;
+}
+
+long
 cScr_ChessPiece::OnAIModeChange (sAIModeChangeMsg* pMsg, cMultiParm&)
 {
 	if (being_attacked_by != 0 && pMsg->mode == kAIM_Dead)
@@ -2130,111 +2191,15 @@ cScr_ChessPiece::Reposition (object square)
 
 	SService<IObjectSrv> pOS (g_pScriptManager);
 	cScrVec position; pOS->Position (position, square); position.z += 0.5;
-	cScrVec old_facing; pOS->Facing (old_facing, ObjId ());
-	cScrVec facing (0.0, 0.0,
-		90.0 + 90.0 * chess::SideFacing (GetSide (ObjId ())));
-
+	cScrVec facing; pOS->Facing (facing, ObjId ());
 	pOS->Teleport (ObjId (), position, facing, 0);
 
-	// play turning motion for major direction changes
-	if (std::fabs (old_facing.z - facing.z) > 22.5)
-		PlayMotion (ObjId (), MOTION_TURN);
+	PlayMotion (ObjId (), MOTION_FACE_ENEMY);
 }
 
 void
-cScr_ChessPiece::GoToSquare (object square, GoType type)
+cScr_ChessPiece::CreateAwareness (object target, uint time)
 {
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	if (type == GO_ATTACK && pPS->Possessed (ObjId (), "AIRCProp"))
-		return; // ranged attackers don't move until afterwards
-
-	bool castling_king = ScriptParamsIter (ObjId (), "ComovingRook");
-
-	going_to_square = square;
-	go_type = type;
-	SService<IAIScrSrv> pAIS (g_pScriptManager);
-	true_bool result;
-	pAIS->MakeGotoObjLoc (result, ObjId (), square,
-		(type == GO_ATTACK) ? kFastSpeed :
-			(type == GO_CASTLING_ROOK) ? kSlowSpeed :
-				castling_king ? kFastSpeed : kNormalSpeed,
-		kHighPriorityAction, "ArriveAtSquare");
-}
-
-void
-cScr_ChessPiece::ArriveAtSquare (uint time)
-{
-	if (go_type == 0) return;
-	going_to_square = 0;
-
-	if (attacking_piece != 0)
-		AttackPiece ((int) attacking_piece, time);
-
-	else if (being_promoted_to != 0)
-		BePromoted ((int) being_promoted_to);
-
-	else if (go_type == GO_PRIMARY)
-	{
-		SetTimedMessage ("Reposition", 500, kSTM_OneShot);
-
-		ScriptParamsIter rook (ObjId (), "ComovingRook"),
-			rook_to (ObjId (), "RookTo");
-		if (rook && rook_to)
-		{
-			SimpleSend (ObjId (), rook.Destination (), "GoToSquare",
-				rook_to.Destination (), GO_CASTLING_ROOK);
-			DestroyLink (rook);
-			DestroyLink (rook_to);
-		}
-		else
-			SimpleSend (ObjId (), StrToObject ("TheGame"),
-				"FinishMove");
-	}
-	else if (go_type == GO_CASTLING_ROOK)
-	{
-		SimpleSend (ObjId (), StrToObject ("TheGame"), "FinishMove");
-		ScriptParamsIter king (ObjId (), "MyLiege");
-		if (king)
-		{
-			FaceObject (ObjId (), king);
-			DestroyLink (king);
-			SetTimedMessage ("BowToKing", 500, kSTM_OneShot);
-		}
-		else
-			Reposition ();
-	}
-
-	go_type = 0;
-}
-
-void
-cScr_ChessPiece::AttackPiece (object piece, uint time)
-{
-	attacking_piece = piece;
-	if (going_to_square != 0)
-		return; // the attack will commence when we arrive
-
-	SimpleSend (ObjId (), piece, "BeAttacked");
-
-	AddSingleMetaProperty ("M-ChessAttacker", ObjId ());
-
-	SService<IAIScrSrv> pAIS (g_pScriptManager);
-	pAIS->SetMinimumAlert (ObjId(), kHighAlert);
-
-	MaintainAttack (time);
-	// the Die timer on the @piece will eventually trigger @FinishAttack
-}
-
-void
-cScr_ChessPiece::MaintainAttack (uint time)
-{
-	object target = (int) attacking_piece;
-	if (!target) return;
-
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	cMultiParm target_mode; pPS->Get (target_mode, target, "AI_Mode", NULL);
-	if (target_mode == kAIM_Dead) { FinishAttack (); return; }
-
 	for (LinkIter aware (ObjId (), target, "AIAwareness"); aware; ++aware)
 		DestroyLink (aware);
 
@@ -2249,6 +2214,92 @@ cScr_ChessPiece::MaintainAttack (uint time)
 		kHighAwareness, 0, time, time, 0, time, 0, 0
 	};
 	CreateLink ("AIAwareness", ObjId (), target, &data);
+}
+
+void
+cScr_ChessPiece::GoToSquare (object square)
+{
+	going_to_square = square;
+	bool castling_king = ScriptParamsIter (ObjId (), "ComovingRook");
+
+	SService<IAIScrSrv> pAIS (g_pScriptManager);
+	true_bool result;
+	pAIS->MakeGotoObjLoc (result, ObjId (), square,
+		castling_king ? kFastSpeed : kNormalSpeed,
+		kHighPriorityAction, "ArriveAtSquare");
+}
+
+void
+cScr_ChessPiece::ArriveAtSquare (uint time)
+{
+	if (going_to_square == 0) return;
+	going_to_square = 0;
+	ScriptParamsIter king (ObjId (), "MyLiege");
+
+	if (attacking_piece != 0)
+		AttackPiece ((int) attacking_piece, time);
+
+	else if (being_promoted_to != 0)
+		BePromoted ((int) being_promoted_to);
+
+	else if (king) // castling rook
+	{
+		SimpleSend (ObjId (), StrToObject ("TheGame"), "FinishMove");
+		FaceObject (ObjId (), king);
+		DestroyLink (king);
+		SetTimedMessage ("BowToKing", 500, kSTM_OneShot);
+	}
+
+	else
+	{
+		SetTimedMessage ("Reposition", 500, kSTM_OneShot);
+
+		ScriptParamsIter rook (ObjId (), "ComovingRook"),
+			rook_to (ObjId (), "RookTo");
+		if (rook && rook_to)
+		{
+			SimpleSend (ObjId (), rook.Destination (), "GoToSquare",
+				rook_to.Destination ());
+			DestroyLink (rook);
+			DestroyLink (rook_to);
+		}
+		else
+			SimpleSend (ObjId (), StrToObject ("TheGame"),
+				"FinishMove");
+	}
+}
+
+void
+cScr_ChessPiece::AttackPiece (object piece, uint time)
+{
+	attacking_piece = piece;
+
+	AddSingleMetaProperty ("M-ChessAttacker", ObjId ());
+	CreateAwareness (piece, time);
+
+	if (going_to_square != 0)
+		return; // the attack will commence when we arrive
+
+	SService<IAIScrSrv> pAIS (g_pScriptManager);
+	pAIS->SetMinimumAlert (ObjId(), kHighAlert);
+
+	SimpleSend (ObjId (), piece, "BeAttacked");
+	MaintainAttack (time);
+	// the Die timer on the @piece will eventually trigger @FinishAttack
+}
+
+void
+cScr_ChessPiece::MaintainAttack (uint time)
+{
+	object target = (int) attacking_piece;
+	if (!target) return;
+	if (!ObjectExists (target)) { FinishAttack (); return; }
+
+	SService<IPropertySrv> pPS (g_pScriptManager);
+	cMultiParm target_mode; pPS->Get (target_mode, target, "AI_Mode", NULL);
+	if (target_mode == kAIM_Dead) { FinishAttack (); return; }
+
+	CreateAwareness (target, time);
 
 	static const eAIResponsePriority prio = kVeryHighPriorityResponse;
 	if (!LinkIter (ObjId (), target, "AIAttack"))
@@ -2266,26 +2317,40 @@ cScr_ChessPiece::FinishAttack ()
 	attacking_piece = 0;
 
 	RemoveSingleMetaProperty ("M-ChessAttacker", ObjId ());
+	SimpleSend (ObjId (), ObjId (), "AbortAttack");
 
 	for (LinkIter attack (ObjId (), 0, "AIAttack"); attack; ++attack)
 		DestroyLink (attack);
+	for (LinkIter aware (ObjId (), 0, "AIAwareness"); aware; ++aware)
+		DestroyLink (aware);
 
 	SService<IAIScrSrv> pAIS (g_pScriptManager);
 	pAIS->SetMinimumAlert (ObjId(), kNoAlert);
 	pAIS->ClearAlertness (ObjId ());
 
 	object square = LinkIter (0, ObjId (), "Population").Source ();
-	if (square) GoToSquare (square, GO_PRIMARY);
-	// FinishMove will be sent to TheGame after going to @square
+	if (!square)
+		square = ScriptParamsIter (0, "ExPopulation", ObjId ()).Source ();
+	if (square)
+		GoToSquare (square); // FinishMove will be after this
 }
 
 void
-cScr_ChessPiece::BeAttacked (object attacker)
+cScr_ChessPiece::BecomeVictim (object attacker, uint time)
 {
-	being_attacked_by = attacker;
+	// don't set being_attacked_by until it's official
 	RemoveSingleMetaProperty ("M-ChessAlive", ObjId ());
 	AddSingleMetaProperty ("M-ChessAttackee", ObjId ());
-	SetTimedMessage ("Die", DUR_ATTACK, kSTM_OneShot);
+	CreateAwareness (attacker, time);
+	FaceObject (ObjId (), attacker);
+}
+
+void
+cScr_ChessPiece::BeAttacked (object attacker, uint time)
+{
+	being_attacked_by = attacker;
+	CreateAwareness (attacker, time);
+	SetTimedMessage ("ForceDie", DUR_ATTACK, kSTM_OneShot);
 }
 
 void
@@ -2294,35 +2359,38 @@ cScr_ChessPiece::Die ()
 	if (being_attacked_by == 0) return;
 	being_attacked_by = 0;
 
-	// increment the pieces-taken statistics
-	const char* statistic = (GetSide (ObjId ()) == chess::SIDE_BLACK)
-		? "stat_enemy_pieces" : "stat_own_pieces";
+	// ensure that any corpses will bury themselves appropriately
 	SService<IQuestSrv> pQS (g_pScriptManager);
-	pQS->Set (statistic, pQS->Get (statistic) + 1, kQuestDataMission);
+	pQS->Set ("chess_corpse_side", GetSide (ObjId ()), kQuestDataMission);
 
-	// make sure we're undeniably and reliably dead
-	SService<IDamageSrv> pDaS (g_pScriptManager);
-	pDaS->Slay (ObjId (), (int) being_attacked_by);
-
+	// set timer to do it on ourself, if we are not replaced
 	SetTimedMessage ("BeginBurial", DUR_DEATH, kSTM_OneShot);
 }
 
 void
 cScr_ChessPiece::BeginBurial ()
 {
+	chess::Side side = GetSide (ObjId ());
+	if (side == chess::SIDE_NONE)
+	{
+		SService<IQuestSrv> pQS (g_pScriptManager);
+		side = (chess::Side) pQS->Get ("chess_corpse_side");
+	}
+
 	// create smoke puff at site of death
 	SService<IObjectSrv> pOS (g_pScriptManager);
-	object fx, fx_archetype = StrToObject ("ChessBurialFX");
+	object fx, fx_archetype = StrToObject ("ChessBurialPuff");
 	cScrVec position; pOS->Position (position, ObjId ());
 	pOS->Create (fx, fx_archetype);
 	if (fx) pOS->Teleport (fx, position, cScrVec (), 0);
 
 	// create smoke puff at gravesite, if any
 	char grave_name[] = "ChessGrave\0";
-	grave_name[10] = chess::SideCode (GetSide (ObjId ()));
+	grave_name[10] = chess::SideCode (side);
 	object grave = StrToObject (grave_name);
 	if (grave)
 	{
+		CreateLink ("ScriptParams", ObjId (), grave, "Grave");
 		pOS->Create (fx, fx_archetype);
 		cScrVec position; pOS->Position (position, grave);
 		if (fx) pOS->Teleport (fx, position, cScrVec (), 0);
@@ -2335,12 +2403,11 @@ cScr_ChessPiece::BeginBurial ()
 void
 cScr_ChessPiece::FinishBurial ()
 {
-	char grave_name[] = "ChessGrave\0";
-	grave_name[10] = chess::SideCode (GetSide (ObjId ()));
-	object grave = StrToObject (grave_name);
-
-	if (grave)
+	ScriptParamsIter _grave (ObjId (), "Grave");
+	if (_grave)
 	{
+		object grave = _grave.Destination ();
+
 		SService<IObjectSrv> pOS (g_pScriptManager);
 		cScrVec position; pOS->Position (position, grave);
 		pOS->Teleport (ObjId (), position, cScrVec (), 0);
@@ -2367,7 +2434,7 @@ cScr_ChessPiece::BePromoted (object promotion)
 	if (square) Reposition (square);
 
 	SService<IObjectSrv> pOS (g_pScriptManager);
-	object fx; pOS->Create (fx, StrToObject ("ChessPromotionFX"));
+	object fx; pOS->Create (fx, StrToObject ("ChessPromotionWhoosh"));
 	if (fx)
 	{
 		// don't ParticleAttach, so that the FX can outlive us
@@ -2415,5 +2482,22 @@ cScr_ChessPiece::HeraldEvent (const std::string& event)
 	int set = GetChessSet (GetSide (ObjId ()));
 	snprintf (schema, 128, "herald%d_%s", set, event.data ());
 	PlaySchema (ObjId (), StrToObject (schema), ObjId ());
+}
+
+
+
+/* ChessCorpse */
+
+cScr_ChessCorpse::cScr_ChessCorpse (const char* pszName, int iHostObjId)
+	: cBaseScript (pszName, iHostObjId),
+	  cBaseAIScript (pszName, iHostObjId),
+	  cScr_ChessPiece (pszName, iHostObjId)
+{}
+
+long
+cScr_ChessCorpse::OnCreate (sScrMsg* pMsg, cMultiParm& mpReply)
+{
+	SetTimedMessage ("BeginBurial", DUR_DEATH, kSTM_OneShot);
+	return cScr_ChessPiece::OnCreate (pMsg, mpReply);
 }
 

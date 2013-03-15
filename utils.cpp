@@ -22,7 +22,6 @@
 #include "utils.h"
 #include "ScriptModule.h"
 #include "ScriptLib.h"
-#include "custom.h"
 
 #include <lg/types.h>
 #include <lg/scrservices.h>
@@ -507,10 +506,6 @@ FaceObject (object ai, object face)
 			+ ((delta_x > 0.0) ? 180.0 : 0.0);
 
 	pOS->Teleport (ai, ai_pos, new_facing, 0);
-
-	// play turning motion for major direction changes
-	if (std::fabs (old_facing.z - new_facing.z) > 22.5)
-		PlayMotion (ai, MOTION_TURN);
 }
 
 /* DestroyObject */
@@ -550,6 +545,7 @@ CreateLink (const char* _flavor, object source, object destination,
 void
 DestroyLink (link destroy)
 {
+	if (!destroy) return;
 	SService<ILinkSrv> pLS (g_pScriptManager);
 	pLS->Destroy (destroy);
 }
