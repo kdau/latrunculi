@@ -22,8 +22,8 @@
 
 #define MISSION_NAME		"A Nice Game of Chess"
 #define AUTHOR_NAME		"Kevin Daughtridge"
-#define VERSION_NUMBER		0,9,2,0 //XBETA
-#define VERSION_STRING		"0.9.2 BETA" //XBETA
+#define VERSION_NUMBER		0,9,4,0 //XBETA
+#define VERSION_STRING		"0.9.4 BETA" //XBETA
 
 #include "version.rc"
 

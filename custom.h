@@ -277,6 +277,7 @@ public:
 protected:
 	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
+	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessIntro","BaseScript",cScr_ChessIntro)
@@ -356,9 +357,11 @@ private:
 	void BeginEndgame ();
 	void FinishEndgame ();
 
+	void AnnounceEvent (const chess::EventConstPtr& event);
+	void HeraldConcept (chess::Side side, const std::string& concept,
+		ulong delay = 0);
 	void AnnounceCheck ();
-	void ShowEventMessage (const chess::EventConstPtr& event);
-	void HeraldEvent (chess::Side side, const char* event);
+
 	void ShowLogbook (const std::string& art);
 
 	void EngineFailure (const std::string& where, const std::string& what);
@@ -477,7 +480,7 @@ protected:
 		cMultiParm& mpReply);
 
 private:
-	void Reposition (object square = object ());
+	void Reposition (bool direct, object square = object ());
 	void CreateAwareness (object target, uint time);
 
 	void GoToSquare (object square);
@@ -501,8 +504,8 @@ private:
 	void FinishPromotion ();
 	script_int being_promoted_to; // object
 
-	// for special "piece" types
-	void HeraldEvent (const std::string& event);
+	// for heralds only
+	void HeraldConcept (const std::string& concept);
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessPiece","Fade",cScr_ChessPiece)

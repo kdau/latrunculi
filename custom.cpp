@@ -702,7 +702,7 @@ cScr_Titled::OnWorldSelect (sScrMsg*, cMultiParm&)
 		std::string message = chess::Translate (msgid);
 		g_pMalloc->Free (msgid);
 		ShowString (message.data (),
-			std::max (CalcTextTime (message.data (), 250), 1000));
+			std::max (CalcTextTime (message.data ()), 2000));
 	}
 	return 0;
 }
@@ -740,10 +740,11 @@ cScr_ChessIntro::OnSim (sSimMsg* pMsg, cMultiParm&)
 long
 cScr_ChessIntro::OnTurnOn (sScrMsg* pMsg, cMultiParm&)
 {
-	// send ourself away, but continue to exist for later effects
+	// send ourself away, but continue to exist for later events
 	SService<IObjectSrv> pOS (g_pScriptManager);
 	pOS->Teleport (ObjId (), { 0, 0, 0 }, { 0, 0, 0 }, 0);
 
+	// make the gems inert
 	for (ScriptParamsIter gem (ObjId (), "Scenario"); gem; ++gem)
 	{
 		if (gem.Destination () != pMsg->from)
@@ -751,20 +752,52 @@ cScr_ChessIntro::OnTurnOn (sScrMsg* pMsg, cMultiParm&)
 		AddSingleMetaProperty ("FrobInert", gem.Destination ());
 	}
 
-/*FIXME To be implemented in a later beta version.
-	for (ScriptParamsIter door (ObjId (), "EntryDoor"); door; ++door)
-		SimpleSend (ObjId (), door.Destination (), "Open");
-
+	// delete all but the correct herald
 	object herald = ScriptParamsIter (ObjId (), "TheHerald").Destination ();
 	for (ScriptParamsIter other (ObjId (), "Herald"); other; ++other)
 		if (other.Destination () != herald)
 			DestroyObject (other);
- */
 
-	SService<IQuestSrv> pQS (g_pScriptManager);
-	pQS->Set ("goal_state_0", 1, kQuestDataMission);
+	// begin the briefing (or skip if none)
+	object briefing = StrToObject ("TheBriefing");
+	if (briefing)
+	{
+		static const int actor = 1;
+		CreateLink ("AIConversationActor", briefing, herald, &actor);
+		SimpleSend (ObjId (), briefing, "TurnOn");
+	}
+	else
+		SimpleSend (ObjId (), ObjId (), "DoneBriefing");
 
 	return 0;
+}
+
+long
+cScr_ChessIntro::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
+{
+	if (!strcmp (pMsg->message, "SubtitleSpeech")
+		&& pMsg->data.type == kMT_String)
+	{
+		SService<IQuestSrv> pQS (g_pScriptManager);
+		int mission = pQS->Get ("chess_mission"),
+			set = pQS->Get ("chess_set");
+
+		char msgid[128] = { 0 };
+		snprintf (msgid, 128, "m%d_%s",
+			mission, (const char*) pMsg->data);
+
+		std::string subtitle = chess::Translate (msgid);
+		ShowString (subtitle.data (), CalcTextTime (subtitle.data ()),
+			GetChessSetColor (set));
+	}
+
+	else if (!strcmp (pMsg->message, "DoneBriefing"))
+	{
+		SService<IQuestSrv> pQS (g_pScriptManager);
+		pQS->Set ("goal_state_0", 1, kQuestDataMission);
+	}
+
+	return cBaseScript::OnMessage (pMsg, mpReply);
 }
 
 
@@ -780,14 +813,14 @@ cScr_ChessScenario::OnWorldSelect (sScrMsg*, cMultiParm&)
 {
 	char msgid[128] = { 0 };
 	snprintf (msgid, 128, "title_%d",
-		GetObjectParamInt (ObjId (), "Mission", 21));
+		GetObjectParamInt (ObjId (), "Mission"));
 
 	cScrStr buffer;
 	SService<IDataSrv> pDS (g_pScriptManager);
 	pDS->GetString (buffer, "titles", msgid, "", "strings");
 
 	ShowString (buffer, CalcTextTime (buffer),
-		GetChessSetColor (GetObjectParamInt (ObjId (), "WhiteSet", 0)));
+		GetChessSetColor (GetObjectParamInt (ObjId (), "WhiteSet")));
 	buffer.Free ();
 
 	return 0;
@@ -797,10 +830,17 @@ long
 cScr_ChessScenario::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 {
 	object intro = StrToObject ("TheIntro");
+	int mission = GetObjectParamInt (ObjId (), "Mission");
+	int set = GetObjectParamInt (ObjId (), "WhiteSet");
+
 	PlaySchemaAmbient (ObjId (), StrToObject ("pickup_gem"));
 
 	SService<IDarkGameSrv> pDGS (g_pScriptManager);
-	pDGS->SetNextMission (GetObjectParamInt (ObjId (), "Mission", 21));
+	pDGS->SetNextMission (mission);
+
+	SService<IQuestSrv> pQS (g_pScriptManager);
+	pQS->Set ("chess_mission", mission, kQuestDataMission);
+	pQS->Set ("chess_set", set, kQuestDataMission);
 
 	for (ScriptParamsIter herald (ObjId (), "Herald"); herald; ++herald)
 		CreateLink ("ScriptParams", intro, herald.Destination (),
@@ -832,16 +872,16 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 {
 	state.Init (NONE);
 
-	if (record.Valid ()) // game exists
+	if (record.Valid ()) // existing game
 	{
 		std::istringstream _record ((const char*) record);
 		try { game = new chess::Game (_record); }
 		CATCH_SCRIPT_FAILURE ("BeginScript", game = NULL; return 0)
 
-		if (state == COMPUTING) // need to restart the engine
+		if (state == COMPUTING) // need to prompt the engine
 			SetTimedMessage ("BeginComputing", 10, kSTM_OneShot);
 		else if (game->GetResult () != chess::Game::ONGOING)
-			return 0; // don't start the engine
+			return 0; // don't start the engine at all
 		else if (state == NONE) // ???
 			state = INTERACTIVE;
 	}
@@ -916,7 +956,7 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 		ArrangeBoard (proxy_origin, true);
 
 	UpdateSim ();
-	SetTimedMessage ("HeraldBegin", 10, kSTM_OneShot);
+	SetTimedMessage ("HeraldBegin", 250, kSTM_OneShot);
 	return 0;
 }
 
@@ -970,7 +1010,10 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 	}
 
 	else if (!strcmp (pMsg->message, "FinishEndgame"))
+	{
+		DestroyObject (pMsg->from);
 		FinishEndgame ();
+	}
 
 	return cBaseScript::OnMessage (pMsg, mpReply);
 }
@@ -996,7 +1039,10 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 		// the next EngineCheck will pick up the move
 
 	else if (!strcmp (pMsg->name, "HeraldBegin"))
-		HeraldEvent (chess::SIDE_NONE, "begin");
+	{
+		HeraldConcept (chess::SIDE_WHITE, "begin");
+		HeraldConcept (chess::SIDE_BLACK, "begin", 6500);
+	}
 
 	else if (!strcmp (pMsg->name, "EngineFailure"))
 	{
@@ -1129,7 +1175,7 @@ cScr_ChessGame::CreatePiece (object square, const chess::Piece& _piece,
 	else if (start_positioned)
 	{
 		SimpleSend (ObjId (), piece, "FadeIn");
-		SimpleSend (ObjId (), piece, "Reposition");
+		SimpleSend (ObjId (), piece, "Position");
 	}
 	else
 		PlayMotion (piece, MOTION_FACE_ENEMY);
@@ -1345,10 +1391,7 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 	}
 
 	if (from_engine)
-	{
-		ShowEventMessage (move);
-		HeraldEvent (move->GetSide (), "move");
-	}
+		AnnounceEvent (move);
 
 	object piece = GetPieceAt (move->GetFrom ()),
 		from = GetSquare (move->GetFrom ()),
@@ -1504,31 +1547,19 @@ cScr_ChessGame::BeginEndgame ()
 
 	chess::EventConstPtr event = game->GetHistory ().empty ()
 		? NULL : game->GetHistory ().back ();
-	ShowEventMessage (event);
+	if (!event) return;
 
-	if (game->GetResult () == chess::Game::WON)
+	if (std::dynamic_pointer_cast<const chess::Draw> (event))
 	{
-		auto loss = std::dynamic_pointer_cast<const chess::Loss> (event);
-		switch (loss ? loss->GetType () : chess::Loss::NONE)
-		{
-		case chess::Loss::CHECKMATE:
-			if (game->GetVictor () == chess::SIDE_WHITE)
-				HeraldEvent (chess::SIDE_WHITE, "win");
-			else
-				HeraldEvent (chess::SIDE_WHITE, "mate");
-			break;
-		case chess::Loss::RESIGNATION:
-			HeraldEvent (loss->GetSide (), "resign");
-			break;
-		case chess::Loss::TIME_CONTROL:
-			HeraldEvent (loss->GetSide (), "time");
-			break;
-		default:
-			break; // ???
-		}
+		// can't be simultanous as the lines may vary
+		HeraldConcept (chess::SIDE_WHITE, event->GetConcept (), 0);
+		HeraldConcept (chess::SIDE_BLACK, event->GetConcept (), 6500);
 	}
-	else // chess::Game::DRAWN
-		HeraldEvent (chess::SIDE_NONE, "draw");
+	else // win
+	{
+		AnnounceEvent (event);
+		HeraldConcept (game->GetVictor (), "win", 6500);
+	}
 }
 
 void
@@ -1578,6 +1609,36 @@ cScr_ChessGame::FinishEndgame ()
 	pQS->Set (goal_qvar, (goal == 0) ? 1 : 3, kQuestDataMission);
 }
 
+void
+cScr_ChessGame::AnnounceEvent (const chess::EventConstPtr& event)
+{
+	if (!event) return;
+
+	std::string desc = event->GetDescription ();
+	if (desc.length () > 0) desc[0] = std::toupper (desc[0]);
+	ShowString (desc.data (), std::max (CalcTextTime (desc.data ()), 4000),
+		GetChessSetColor (GetChessSet (event->GetSide ())));
+
+	HeraldConcept (event->GetSide (), event->GetConcept ());
+}
+
+void
+cScr_ChessGame::HeraldConcept (chess::Side side, const std::string& concept,
+	ulong delay)
+{
+	for (ScriptParamsIter herald (ObjId (), "Herald"); herald; ++herald)
+		if (side == chess::SIDE_NONE || side == GetSide (herald))
+		{
+			sScrMsg* message = new sScrMsg ();
+			message->from = ObjId ();
+			message->to = herald.Destination ();
+			message->message = "HeraldConcept";
+			message->data = concept.data ();
+			g_pScriptManager->SetTimedMessage
+				(message, delay, kSTM_OneShot);
+		}
+}
+
 // for AnnounceCheck below
 	class Check : public chess::Event
 	{
@@ -1596,8 +1657,10 @@ cScr_ChessGame::FinishEndgame ()
 		virtual std::string GetDescription () const
 		{
 			return chess::TranslateFormat ("in_check",
-				chess::SideName (side).data ());
+				chess::SideName (side, chess::NOMINATIVE).data ());
 		}
+
+		virtual std::string GetConcept () const { return "check"; }
 
 	private:
 		chess::Side side;
@@ -1607,37 +1670,8 @@ void
 cScr_ChessGame::AnnounceCheck ()
 {
 	if (game && game->IsInCheck ())
-	{
-		ShowEventMessage
+		AnnounceEvent
 			(std::make_shared<Check> (game->GetActiveSide ()));
-		HeraldEvent (game->GetActiveSide (), "check");
-	}
-}
-
-void
-cScr_ChessGame::ShowEventMessage (const chess::EventConstPtr& event)
-{
-	if (!event) return;
-	std::string desc = event->GetDescription ();
-	if (desc.length () > 0) desc[0] = std::toupper (desc[0]);
-	ShowString (desc.data (), std::max (CalcTextTime (desc.data ()), 4000),
-		GetChessSetColor (GetChessSet (event->GetSide ())));
-}
-
-void
-cScr_ChessGame::HeraldEvent (chess::Side side, const char* event)
-{
-	if (side == chess::SIDE_WHITE || side == chess::SIDE_NONE)
-		for (ScriptParamsIter herald (ObjId (), "HeraldW");
-		     herald; ++herald)
-			SimpleSend (ObjId (), herald.Destination (),
-				"HeraldEvent", event);
-
-	if (side == chess::SIDE_BLACK || side == chess::SIDE_NONE)
-		for (ScriptParamsIter herald (ObjId (), "HeraldB");
-		     herald; ++herald)
-			SimpleSend (ObjId (), herald.Destination (),
-				"HeraldEvent", event);
 }
 
 void
@@ -2068,8 +2102,11 @@ cScr_ChessPiece::OnBeginScript (sScrMsg*, cMultiParm&)
 long
 cScr_ChessPiece::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	if (!strcmp (pMsg->message, "Reposition"))
-		Reposition ();
+	if (!strcmp (pMsg->message, "Position"))
+		Reposition (true);
+
+	else if (!strcmp (pMsg->message, "Reposition"))
+		Reposition (false);
 
 	else if (!strcmp (pMsg->message, "Select"))
 	{
@@ -2103,15 +2140,23 @@ cScr_ChessPiece::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 			pMsg->data.type == kMT_Int)
 		BePromoted ((int) pMsg->data);
 
-	else if (!strcmp (pMsg->message, "HeraldEvent") &&
+	else if (!strcmp (pMsg->message, "HeraldConcept") &&
 			pMsg->data.type == kMT_String)
-		HeraldEvent ((const char*) pMsg->data);
+		HeraldConcept ((const char*) pMsg->data);
 
 	else if (!strcmp (pMsg->message, "BeginThinking"))
 		PlayMotion (ObjId (), MOTION_THINKING);
 
 	else if (!strcmp (pMsg->message, "FinishThinking"))
 		PlayMotion (ObjId (), MOTION_THOUGHT);
+
+	else if (!strcmp (pMsg->message, "TellIntro") &&
+		pMsg->data.type == kMT_String)
+	{
+		object intro = StrToObject ("TheIntro");
+		if (intro) SimpleSend (ObjId (), intro,
+			(const char*) pMsg->data, pMsg->data2);
+	}
 
 	return cScr_Fade::OnMessage (pMsg, mpReply);
 }
@@ -2120,7 +2165,7 @@ long
 cScr_ChessPiece::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 {
 	if (!strcmp (pMsg->name, "Reposition"))
-		Reposition ();
+		Reposition (false);
 
 	else if (!strcmp (pMsg->name, "MaintainAttack"))
 		MaintainAttack (pMsg->time);
@@ -2184,14 +2229,32 @@ cScr_ChessPiece::OnAIModeChange (sAIModeChangeMsg* pMsg, cMultiParm&)
 }
 
 void
-cScr_ChessPiece::Reposition (object square)
+cScr_ChessPiece::Reposition (bool direct, object square)
 {
 	if (!square) square = LinkIter (0, ObjId (), "Population").Source ();
 	if (!square) return;
 
 	SService<IObjectSrv> pOS (g_pScriptManager);
-	cScrVec position; pOS->Position (position, square); position.z += 0.5;
+
+	cScrVec old_pos; pOS->Position (old_pos, ObjId ());
 	cScrVec facing; pOS->Facing (facing, ObjId ());
+
+	cScrVec square_pos; pOS->Position (square_pos, square);
+	if (direct)
+		square_pos.z += 0.5; // don't be stuck in ground
+	else
+		square_pos.z = old_pos.z; // don't move on z axis
+
+	cScrVec distance = square_pos - old_pos, position;
+	if (direct || distance.Magnitude () < 0.25)
+		position = square_pos;
+	else
+	{
+		distance /= distance.Magnitude ();
+		position = old_pos + distance * 0.2;
+		SetTimedMessage ("Reposition", 10, kSTM_OneShot);
+	}
+
 	pOS->Teleport (ObjId (), position, facing, 0);
 
 	PlayMotion (ObjId (), MOTION_FACE_ENEMY);
@@ -2307,7 +2370,7 @@ cScr_ChessPiece::MaintainAttack (uint time)
 
 	pPS->Set (ObjId (), "AI_Mode", NULL, kAIM_Combat);
 
-	SetTimedMessage ("MaintainAttack", 250, kSTM_OneShot);
+	SetTimedMessage ("MaintainAttack", 125, kSTM_OneShot);
 }
 
 void
@@ -2325,14 +2388,18 @@ cScr_ChessPiece::FinishAttack ()
 		DestroyLink (aware);
 
 	SService<IAIScrSrv> pAIS (g_pScriptManager);
-	pAIS->SetMinimumAlert (ObjId(), kNoAlert);
+	pAIS->SetMinimumAlert (ObjId (), kNoAlert);
 	pAIS->ClearAlertness (ObjId ());
 
+	// prevent some non-human AIs from continuing to play first alert speech
+	HaltSpeech (ObjId ());
+
+	// go to final destination; FinishMove will be called from there
 	object square = LinkIter (0, ObjId (), "Population").Source ();
 	if (!square)
 		square = ScriptParamsIter (0, "ExPopulation", ObjId ()).Source ();
 	if (square)
-		GoToSquare (square); // FinishMove will be after this
+		GoToSquare (square);
 }
 
 void
@@ -2431,10 +2498,14 @@ cScr_ChessPiece::BePromoted (object promotion)
 		return; // the promotion will commence when we arrive/capture
 
 	object square = LinkIter (0, promotion, "Population").Source ();
-	if (square) Reposition (square);
+	if (square) Reposition (true, square);
+
+	int set = GetChessSet (GetSide (ObjId ()));
+	char fx_name[128] = { 0 };
+	snprintf (fx_name, 128, "ChessPromotion%d", set);
 
 	SService<IObjectSrv> pOS (g_pScriptManager);
-	object fx; pOS->Create (fx, StrToObject ("ChessPromotionWhoosh"));
+	object fx; pOS->Create (fx, StrToObject (fx_name));
 	if (fx)
 	{
 		// don't ParticleAttach, so that the FX can outlive us
@@ -2453,7 +2524,7 @@ cScr_ChessPiece::RevealPromotion ()
 	pPS->SetSimple (ObjId (), "PhysAIColl", false);
 
 	SimpleSend (ObjId (), ObjId (), "FadeOut");
-	SimpleSend (ObjId (), being_promoted_to, "Reposition");
+	SimpleSend (ObjId (), being_promoted_to, "Position");
 	SimpleSend (ObjId (), being_promoted_to, "FadeIn");
 
 	SetTimedMessage ("FinishPromotion", DUR_PROMOTION / 2, kSTM_OneShot);
@@ -2472,16 +2543,26 @@ cScr_ChessPiece::FinishPromotion ()
 }
 
 void
-cScr_ChessPiece::HeraldEvent (const std::string& event)
+cScr_ChessPiece::HeraldConcept (const std::string& concept)
 {
+	int set = GetChessSet (GetSide (ObjId ()));
+
 	// play the trumpeting motion
 	PlayMotion (ObjId (), MOTION_PLAY_HORN);
 
-	// play the announcement schema (fanfare + speech combined)
-	char schema[128] = { 0 };
-	int set = GetChessSet (GetSide (ObjId ()));
-	snprintf (schema, 128, "herald%d_%s", set, event.data ());
-	PlaySchema (ObjId (), StrToObject (schema), ObjId ());
+	// if the player is out of earshot (along x axis),
+	// dislocate sound to center of board (TheGame)
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	cScrVec player_pos; pOS->Position (player_pos, StrToObject ("Player"));
+	cScrVec my_pos; pOS->Position (my_pos, ObjId ());
+	bool earshot = fabs (player_pos.x - my_pos.x) < 50.0;
+	object source = earshot ? ObjId () : StrToObject ("TheGame");
+
+	// play the announcement sound (fanfare and/or speech)
+	char tags[128] = { 0 };
+	snprintf (tags, 128, "ChessSet set%d, ChessConcept %s",
+		set, concept.data ());
+	PlayEnvSchema (ObjId (), tags, source, source, kEnvSoundAtObjLoc);
 }
 
 

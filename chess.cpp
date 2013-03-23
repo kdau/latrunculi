@@ -178,9 +178,17 @@ SideFromCode (char code)
 }
 
 std::string
-SideName (Side side)
+SideName (Side side, NameCase name_case)
 {
-	return SideValid (side) ? Translate ("side_", side) : std::string ();
+	std::string msgid;
+	switch (name_case)
+	{
+	case NOMINATIVE: msgid = "side_nom_"; break;
+	case DATIVE: msgid = "side_dat_"; break;
+	default: return std::string ();
+	}
+
+	return SideValid (side) ? Translate (msgid, side) : std::string ();
 }
 
 int
@@ -262,13 +270,19 @@ const char
 Piece::CODES[N_SIDES][N_TYPES+1] = { "KQRBNP", "kqrbnp" };
 
 std::string
-Piece::GetName (bool definite) const
+Piece::GetName (NameCase name_case) const
 {
-	return Valid ()
-		? Translate (std::string
-			(definite ? "piece_def_" : "piece_indef_") +
-			CODES[SIDE_BLACK][type], side)
-		: std::string ();
+	std::string msgid;
+	switch (name_case)
+	{
+	case NOMINATIVE: msgid = "piece_nom_"; break;
+	case ACCUSATIVE: msgid = "piece_acc_"; break;
+	case BECOMING: msgid = "piece_indef_"; break;
+	default: return std::string ();
+	}
+
+	if (!Valid ()) return std::string ();
+	return Translate (msgid + CODES[SIDE_BLACK][type], side);
 }
 
 Rank
@@ -382,8 +396,20 @@ Loss::GetDescription () const
 	default: return std::string ();
 	}
 	return TranslateFormat (msgid,
-		SideName (side).data (),
-		SideName (Opponent (side)).data ());
+		SideName (side, NOMINATIVE).data (),
+		SideName (Opponent (side), DATIVE).data ());
+}
+
+std::string
+Loss::GetConcept () const
+{
+	switch (type)
+	{
+	case CHECKMATE: return "mate"; break;
+	case RESIGNATION: return "resign"; break;
+	case TIME_CONTROL: return "time"; break;
+	default: return std::string ();
+	}
 }
 
 bool
@@ -456,8 +482,14 @@ Draw::GetDescription () const
 	default: return std::string ();
 	}
 	return TranslateFormat (msgid,
-		SideName (SIDE_WHITE).data (),
-		SideName (SIDE_BLACK).data ());
+		SideName (SIDE_WHITE, NOMINATIVE).data (),
+		SideName (SIDE_BLACK, NOMINATIVE).data ());
+}
+
+std::string
+Draw::GetConcept () const
+{
+	return "draw";
 }
 
 bool
@@ -527,10 +559,16 @@ Move::GetDescription () const
 {
 	return TranslateFormat (GetPromotion ().Valid ()
 				? "move_empty_promotion" : "move_empty",
-		GetPiece ().GetName (true).data (),
+		GetPiece ().GetName (NOMINATIVE).data (),
 		GetFrom ().GetCode ().data (),
 		GetTo ().GetCode ().data (),
-		GetPromotion ().GetName (false).data ());
+		GetPromotion ().GetName (BECOMING).data ());
+}
+
+std::string
+Move::GetConcept () const
+{
+	return "move";
 }
 
 bool
@@ -587,11 +625,11 @@ Capture::GetDescription () const
 {
 	return TranslateFormat (GetPromotion ().Valid ()
 				? "move_capture_promotion" : "move_capture",
-		GetPiece ().GetName (true).data (),
+		GetPiece ().GetName (NOMINATIVE).data (),
 		GetFrom ().GetCode ().data (),
-		GetCapturedPiece ().GetName (true).data (),
+		GetCapturedPiece ().GetName (ACCUSATIVE).data (),
 		GetTo ().GetCode ().data (),
-		GetPromotion ().GetName (false).data ());
+		GetPromotion ().GetName (BECOMING).data ());
 }
 
 bool
@@ -643,9 +681,9 @@ std::string
 EnPassantCapture::GetDescription () const
 {
 	return TranslateFormat ("move_en_passant",
-		GetPiece ().GetName (true).data (),
+		GetPiece ().GetName (NOMINATIVE).data (),
 		GetFrom ().GetCode ().data (),
-		GetCapturedPiece ().GetName (true).data (),
+		GetCapturedPiece ().GetName (ACCUSATIVE).data (),
 		GetCapturedSquare ().GetCode ().data (),
 		GetTo ().GetCode ().data ());
 }
@@ -739,7 +777,7 @@ Castling::GetDescription () const
 {
 	return TranslateFormat
 		((type == KINGSIDE) ? "move_castle_ks" : "move_castle_qs",
-		 SideName (GetSide ()).data ());
+		 SideName (GetSide (), NOMINATIVE).data ());
 }
 
 bool
@@ -1218,7 +1256,7 @@ Game::Game (std::istream& record)
 		}
 	}
 	if (GetFullmoveNumber () != event_fullmove)
-		throw std::invalid_argument ("history inconsistent with position");
+		DebugMessage ("history inconsistent with position in game record");
 
 	UpdatePossibleMoves ();
 	DetectEndgames (); // just in case
@@ -1237,8 +1275,8 @@ std::string
 Game::GetLogbookHeading (unsigned page)
 {
 	return TranslateFormat ("logbook_heading",
-		SideName (SIDE_WHITE).data (),
-		SideName (SIDE_BLACK).data (),
+		SideName (SIDE_WHITE, DATIVE).data (),
+		SideName (SIDE_BLACK, DATIVE).data (),
 		page);
 }
 

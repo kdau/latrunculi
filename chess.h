@@ -105,6 +105,14 @@ typedef std::vector<Square> Squares;
  ** Piece (Side, PieceType)
  **/
 
+enum NameCase
+{
+	NOMINATIVE,
+	DATIVE,
+	ACCUSATIVE,
+	BECOMING
+};
+
 enum Side
 {
 	SIDE_NONE = -1,
@@ -116,7 +124,7 @@ enum Side
 bool SideValid (Side side);
 char SideCode (Side side);
 Side SideFromCode (char code);
-std::string SideName (Side side);
+std::string SideName (Side side, NameCase name_case);
 int SideFacing (Side side);
 Side Opponent (Side side);
 
@@ -146,7 +154,7 @@ struct Piece
 	void SetCode (char code);
 	static const char NONE_CODE;
 
-	std::string GetName (bool definite) const;
+	std::string GetName (NameCase name_case) const;
 
 	Rank GetInitialRank () const;
 
@@ -203,6 +211,7 @@ public:
 	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
 
 	virtual std::string GetDescription () const = 0;
+	virtual std::string GetConcept () const = 0;
 
 protected:
 	Event () : valid (true) {}
@@ -245,6 +254,7 @@ public:
 	Type GetType () const { return type; }
 
 	virtual std::string GetDescription () const;
+	virtual std::string GetConcept () const;
 
 protected:
 	virtual bool Equals (const Event& rhs) const;
@@ -282,6 +292,7 @@ public:
 	Type GetType () const { return type; }
 
 	virtual std::string GetDescription () const;
+	virtual std::string GetConcept () const;
 
 protected:
 	virtual bool Equals (const Event& rhs) const;
@@ -306,6 +317,7 @@ public:
 
 	std::string GetUCICode () const;
 	virtual std::string GetDescription () const;
+	virtual std::string GetConcept () const;
 
 protected:
 	virtual bool Equals (const Event& rhs) const;
