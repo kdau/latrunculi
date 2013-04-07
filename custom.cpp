@@ -47,6 +47,7 @@
 #define DUR_PROMOTION 3000
 #define DUR_ATTACK 15000
 #define DUR_DEATH 3000
+#define DUR_CORPSING 250
 #define DUR_BURIAL 1000
 
 
@@ -779,16 +780,12 @@ cScr_ChessIntro::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 		&& pMsg->data.type == kMT_String)
 	{
 		SService<IQuestSrv> pQS (g_pScriptManager);
-		int mission = pQS->Get ("chess_mission"),
-			set = pQS->Get ("chess_set");
-
 		char msgid[128] = { 0 };
 		snprintf (msgid, 128, "m%d_%s",
-			mission, (const char*) pMsg->data);
+			pQS->Get ("chess_mission"), (const char*) pMsg->data);
 
 		std::string subtitle = chess::Translate (msgid);
-		ShowString (subtitle.data (), CalcTextTime (subtitle.data ()),
-			GetChessSetColor (set));
+		ShowString (subtitle.data (), CalcTextTime (subtitle.data ()));
 	}
 
 	else if (!strcmp (pMsg->message, "DoneBriefing"))
@@ -831,7 +828,6 @@ cScr_ChessScenario::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 {
 	object intro = StrToObject ("TheIntro");
 	int mission = GetObjectParamInt (ObjId (), "Mission");
-	int set = GetObjectParamInt (ObjId (), "WhiteSet");
 
 	PlaySchemaAmbient (ObjId (), StrToObject ("pickup_gem"));
 
@@ -840,7 +836,6 @@ cScr_ChessScenario::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
 
 	SService<IQuestSrv> pQS (g_pScriptManager);
 	pQS->Set ("chess_mission", mission, kQuestDataMission);
-	pQS->Set ("chess_set", set, kQuestDataMission);
 
 	for (ScriptParamsIter herald (ObjId (), "Herald"); herald; ++herald)
 		CreateLink ("ScriptParams", intro, herald.Destination (),
@@ -911,8 +906,6 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 			((ChessEngine::Difficulty) pQS->Get ("difficulty"));
 
 		engine->StartGame (game);
-
-		SetTimedMessage ("EngineCheck", 250, kSTM_Periodic);
 	}
 	catch (std::exception& e)
 	{
@@ -957,6 +950,8 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 
 	UpdateSim ();
 	SetTimedMessage ("HeraldBegin", 250, kSTM_OneShot);
+	SetTimedMessage ("TickTock", 1000, kSTM_Periodic);
+	SetTimedMessage ("EngineCheck", 250, kSTM_Periodic);
 	return 0;
 }
 
@@ -1021,7 +1016,16 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 long
 cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 {
-	if (engine && !strcmp (pMsg->name, "EngineCheck"))
+	if (state != NONE && !strcmp (pMsg->name, "TickTock"))
+	{
+		SService<IQuestSrv> pQS (g_pScriptManager);
+		int time = pQS->Get ("stat_time") + 1000;
+		pQS->Set ("stat_time", time, kQuestDataMission);
+		for (ScriptParamsIter clock (ObjId (), "Clock"); clock; ++clock)
+			SimpleSend (ObjId (), clock.Destination (), "TickTock");
+	}
+
+	else if (engine && !strcmp (pMsg->name, "EngineCheck"))
 	{
 		try { engine->WaitUntilReady (); }
 		CATCH_ENGINE_FAILURE ("EngineCheck",)
@@ -1545,21 +1549,8 @@ cScr_ChessGame::BeginEndgame ()
 	for (ScriptParamsIter clock (ObjId (), "Clock"); clock; ++clock)
 		SimpleSend (ObjId (), clock.Destination (), "StopTheClock");
 
-	chess::EventConstPtr event = game->GetHistory ().empty ()
-		? NULL : game->GetHistory ().back ();
-	if (!event) return;
-
-	if (std::dynamic_pointer_cast<const chess::Draw> (event))
-	{
-		// can't be simultanous as the lines may vary
-		HeraldConcept (chess::SIDE_WHITE, event->GetConcept (), 0);
-		HeraldConcept (chess::SIDE_BLACK, event->GetConcept (), 6500);
-	}
-	else // win
-	{
-		AnnounceEvent (event);
-		HeraldConcept (game->GetVictor (), "win", 6500);
-	}
+	if (!game->GetHistory ().empty ())
+		AnnounceEvent (game->GetHistory ().back ());
 }
 
 void
@@ -1619,7 +1610,20 @@ cScr_ChessGame::AnnounceEvent (const chess::EventConstPtr& event)
 	ShowString (desc.data (), std::max (CalcTextTime (desc.data ()), 4000),
 		GetChessSetColor (GetChessSet (event->GetSide ())));
 
-	HeraldConcept (event->GetSide (), event->GetConcept ());
+	if (std::dynamic_pointer_cast<const chess::Draw> (event))
+	{
+		// can't be simultanous as the lines may vary
+		HeraldConcept (chess::SIDE_WHITE, event->GetConcept (), 0);
+		HeraldConcept (chess::SIDE_BLACK, event->GetConcept (), 6500);
+	}
+	else
+	{
+		HeraldConcept (event->GetSide (), event->GetConcept ());
+
+		// if a Loss, announce the opposing side's win
+		if (std::dynamic_pointer_cast<const chess::Loss> (event))
+			HeraldConcept (game->GetVictor (), "win", 6500);
+	}
 }
 
 void
@@ -1785,92 +1789,29 @@ cScr_ChessGame::ScriptFailure (const std::string& where,
 
 cScr_ChessClock::cScr_ChessClock (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
-	  SCRIPT_VAROBJ (ChessClock, time_remaining, iHostObjId),
-	  SCRIPT_VAROBJ (ChessClock, time_total, iHostObjId),
+	  SCRIPT_VAROBJ (ChessClock, time_control, iHostObjId),
+	  SCRIPT_VAROBJ (ChessClock, running, iHostObjId),
 	  focused (false)
 {}
 
 long
 cScr_ChessClock::OnBeginScript (sScrMsg*, cMultiParm&)
 {
-	time_remaining.Init (0);
-	time_total.Init (0);
-	return 0;
-}
-
-long
-cScr_ChessClock::OnSim (sSimMsg* pMsg, cMultiParm&)
-{
-	int time = GetObjectParamInt (ObjId (), "ClockTime");
-	if (pMsg->fStarting && time > 0)
-	{
-		time_total = time;
-		time_remaining = time;
-		SetTimedMessage ("TickTock", 1000, kSTM_Periodic);
-	}
+	time_control.Init (GetObjectParamInt (ObjId (), "ClockTime"));
+	running.Init (time_control > 0);
 	return 0;
 }
 
 long
 cScr_ChessClock::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	cBaseScript::OnMessage (pMsg, mpReply);
-	if (!!strcmp (pMsg->message, "StopTheClock") ||
-		time_total == 0) return 0;
+	if (!strcmp (pMsg->message, "TickTock"))
+		TickTock ();
 
-	time_total = 0;
-	AddSingleMetaProperty ("FrobInertFocusable", ObjId ());
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	pPS->Remove (ObjId (), "AmbientHacked");
+	else if (!strcmp (pMsg->message, "StopTheClock"))
+		StopTheClock ();
 
-	return 0;
-}
-
-long
-cScr_ChessClock::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
-{
-	SService<IPropertySrv> pPS (g_pScriptManager);
-
-	cBaseScript::OnTimer (pMsg, mpReply);
-
-	if (!!strcmp (pMsg->name, "TickTock") ||
-	    time_remaining <= 0 || time_total <= 0)
-		return 0;
-
-	// decrement the time
-	--time_remaining;
-
-	// update the clock joint
-	int joint = GetObjectParamInt (ObjId (), "ClockJoint");
-	float low = GetObjectParamFloat (ObjId (), "ClockLow"),
-		high = GetObjectParamFloat (ObjId (), "ClockHigh"),
-		range = high - low;
-	if (joint >= 1 && joint <= 6 && range > 0.0)
-	{
-		char joint_name[] = "Joint \0";
-		joint_name[6] = '0' + joint;
-		float time_pct = float (time_remaining) / float (time_total),
-			position = low + time_pct * range;
-		pPS->Set (ObjId (), "JointPos", joint_name, position);
-	}
-
-	// notify if time has run out
-	if (time_remaining <= 0)
-	{
-		time_total = 0;
-		AddSingleMetaProperty ("FrobInert", ObjId ());
-		pPS->Remove (ObjId (), "AmbientHacked");
-		PlaySchema (ObjId (), StrToObject ("button_rmz"), ObjId ());
-		PlaySchema (ObjId (), StrToObject ("dinner_bell"), ObjId ());
-		SimpleSend (ObjId (), StrToObject ("TheGame"),
-			"TimeControl", GetSide (ObjId ()));
-	}
-
-	// display the time if focused
-	else
-		ShowTimeRemaining ();
-
-	return 0;
+	return cBaseScript::OnMessage (pMsg, mpReply);
 }
 
 long
@@ -1889,18 +1830,73 @@ cScr_ChessClock::OnWorldDeSelect (sScrMsg*, cMultiParm&)
 }
 
 void
+cScr_ChessClock::TickTock ()
+{
+	SService<IPropertySrv> pPS (g_pScriptManager);
+
+	if (!running)
+	{
+		if (focused)
+			ShowTimeRemaining ();
+		return;
+	}
+
+	// check the time
+	unsigned time_remaining = GetTimeRemaining ();
+	float pct_remaining = float (time_remaining) / float (time_control);
+
+	// update the clock joint
+	int joint = GetObjectParamInt (ObjId (), "ClockJoint");
+	float low = GetObjectParamFloat (ObjId (), "ClockLow"),
+		high = GetObjectParamFloat (ObjId (), "ClockHigh"),
+		range = high - low;
+	if (joint >= 1 && joint <= 6 && range > 0.0)
+	{
+		char joint_name[] = "Joint \0";
+		joint_name[6] = '0' + joint;
+		pPS->Set (ObjId (), "JointPos", joint_name,
+			low + pct_remaining * range);
+	}
+
+	// notify if time has run out
+	if (time_remaining == 0)
+	{
+		StopTheClock ();
+		PlaySchema (ObjId (), StrToObject ("dinner_bell"), ObjId ());
+		SimpleSend (ObjId (), StrToObject ("TheGame"),
+			"TimeControl", GetSide (ObjId ()));
+	}
+
+	// update the displayed time if focused
+	else if (focused)
+		ShowTimeRemaining ();
+}
+
+void
+cScr_ChessClock::StopTheClock ()
+{
+	running = false;
+	AddSingleMetaProperty ("FrobInertFocusable", ObjId ());
+	SService<IPropertySrv> pPS (g_pScriptManager);
+	pPS->Remove (ObjId (), "AmbientHacked");
+	PlaySchema (ObjId (), StrToObject ("button_rmz"), ObjId ());
+}
+
+unsigned
+cScr_ChessClock::GetTimeRemaining ()
+{
+	SService<IQuestSrv> pQS (g_pScriptManager);
+	return std::max (time_control - pQS->Get ("stat_time") / 1000, 0);
+}
+
+void
 cScr_ChessClock::ShowTimeRemaining ()
 {
+	unsigned time_remaining = GetTimeRemaining ();
 	bool last_minute = (time_remaining <= 60);
-	// keep the clock message on screen for the last minute
-	if (time_remaining > 0 && (focused || last_minute))
-	{
-		const char* msgid =
-			last_minute ? "time_seconds" : "time_minutes";
-		unsigned time =
-			last_minute ? time_remaining : (time_remaining / 60);
-		ShowString (chess::TranslateFormat (msgid, time).data (), 1010);
-	}
+	const char* msgid = last_minute ? "time_seconds" : "time_minutes";
+	unsigned time = last_minute ? time_remaining : (time_remaining / 60);
+	ShowString (chess::TranslateFormat (msgid, time).data (), 1010);
 }
 
 
@@ -2260,15 +2256,11 @@ cScr_ChessPiece::Reposition (bool direct, object square)
 	PlayMotion (ObjId (), MOTION_FACE_ENEMY);
 }
 
-void
+link
 cScr_ChessPiece::CreateAwareness (object target, uint time)
 {
-	for (LinkIter aware (ObjId (), target, "AIAwareness"); aware; ++aware)
-		DestroyLink (aware);
-
 	SService<IObjectSrv> pOS (g_pScriptManager);
 	cScrVec target_pos; pOS->Position (target_pos, target);
-
 	sAIAwareness data
 	{
 		target, kAIAware_Seen | kAIAware_Heard | kAIAware_CanRaycast
@@ -2276,7 +2268,18 @@ cScr_ChessPiece::CreateAwareness (object target, uint time)
 		kHighAwareness, kHighAwareness, time, time, target_pos,
 		kHighAwareness, 0, time, time, 0, time, 0, 0
 	};
-	CreateLink ("AIAwareness", ObjId (), target, &data);
+
+	if (link aware = LinkIter (ObjId (), target, "AIAwareness"))
+	{
+		SInterface<ILinkManager> pLM (g_pScriptManager);
+		data = *reinterpret_cast<sAIAwareness*> (pLM->GetData (aware));
+		data.uFlags |= kAIAware_Seen | kAIAware_FirstHand;
+		data.i2 = data.Level = data.PeakLevel = kHighAwareness;
+		pLM->SetData (aware, &data);
+		return aware;
+	}
+	else
+		return CreateLink ("AIAwareness", ObjId (), target, &data);
 }
 
 void
@@ -2348,7 +2351,7 @@ cScr_ChessPiece::AttackPiece (object piece, uint time)
 
 	SimpleSend (ObjId (), piece, "BeAttacked");
 	MaintainAttack (time);
-	// the Die timer on the @piece will eventually trigger @FinishAttack
+	// if needed, the @piece's Die timer will eventually call FinishAttack
 }
 
 void
@@ -2356,17 +2359,38 @@ cScr_ChessPiece::MaintainAttack (uint time)
 {
 	object target = (int) attacking_piece;
 	if (!target) return;
-	if (!ObjectExists (target)) { FinishAttack (); return; }
 
 	SService<IPropertySrv> pPS (g_pScriptManager);
-	cMultiParm target_mode; pPS->Get (target_mode, target, "AI_Mode", NULL);
-	if (target_mode == kAIM_Dead) { FinishAttack (); return; }
+	cMultiParm target_mode, target_hp;
+	if (ObjectExists (target))
+	{
+		pPS->Get (target_mode, target, "AI_Mode", NULL);
+		pPS->Get (target_hp, target, "HitPoints", NULL);
+	}
+
+	if (!ObjectExists (target) ||
+	    (target_mode.type == kMT_Int && target_mode == kAIM_Dead) ||
+	    (target_hp.type == kMT_Int && (int) target_hp <= 0))
+	{
+		FinishAttack ();
+		return;
+	}
 
 	CreateAwareness (target, time);
 
-	static const eAIResponsePriority prio = kVeryHighPriorityResponse;
-	if (!LinkIter (ObjId (), target, "AIAttack"))
+	bool have_attack = false;
+	for (LinkIter attack (ObjId (), 0, "AIAttack"); attack; ++attack)
+		if (attack.Destination () == target)
+			have_attack = true;
+		else
+			DestroyLink (attack);
+
+	if (!have_attack)
+	{
+		static const eAIResponsePriority prio
+			= kVeryHighPriorityResponse;
 		CreateLink ("AIAttack", ObjId (), target, &prio);
+	}
 
 	pPS->Set (ObjId (), "AI_Mode", NULL, kAIM_Combat);
 
@@ -2545,24 +2569,47 @@ cScr_ChessPiece::FinishPromotion ()
 void
 cScr_ChessPiece::HeraldConcept (const std::string& concept)
 {
-	int set = GetChessSet (GetSide (ObjId ()));
-
 	// play the trumpeting motion
 	PlayMotion (ObjId (), MOTION_PLAY_HORN);
-
-	// if the player is out of earshot (along x axis),
-	// dislocate sound to center of board (TheGame)
-	SService<IObjectSrv> pOS (g_pScriptManager);
-	cScrVec player_pos; pOS->Position (player_pos, StrToObject ("Player"));
-	cScrVec my_pos; pOS->Position (my_pos, ObjId ());
-	bool earshot = fabs (player_pos.x - my_pos.x) < 50.0;
-	object source = earshot ? ObjId () : StrToObject ("TheGame");
 
 	// play the announcement sound (fanfare and/or speech)
 	char tags[128] = { 0 };
 	snprintf (tags, 128, "ChessSet set%d, ChessConcept %s",
-		set, concept.data ());
+		GetChessSet (GetSide (ObjId ())), concept.data ());
+	object source = GetHeraldrySource ();
 	PlayEnvSchema (ObjId (), tags, source, source, kEnvSoundAtObjLoc);
+}
+
+object
+cScr_ChessPiece::GetHeraldrySource ()
+{
+	SService<IObjectSrv> pOS (g_pScriptManager);
+
+	object source = ScriptParamsIter (ObjId (), "HeraldrySource");
+	if (!source)
+	{
+		pOS->Create (source, StrToObject ("ambientSound"));
+		if (!source) return source;
+		CreateLink ("ScriptParams", ObjId (), source, "HeraldrySource");
+	}
+
+	cScrVec herald_pos; pOS->Position (herald_pos, ObjId ());
+	cScrVec player_pos; pOS->Position (player_pos, StrToObject ("Player"));
+
+	// if the player is out of earshot, dislocate herald sounds toward them
+	static const float EARSHOT = 25.0;
+	cScrVec source_pos = herald_pos;
+	if (player_pos.x < herald_pos.x - EARSHOT)
+		source_pos.x = player_pos.x + EARSHOT;
+	else if (player_pos.x > herald_pos.x + EARSHOT)
+		source_pos.x = player_pos.x - EARSHOT;
+	if (player_pos.y < herald_pos.y - EARSHOT)
+		source_pos.y = player_pos.y + EARSHOT;
+	else if (player_pos.y > herald_pos.y + EARSHOT)
+		source_pos.y = player_pos.y - EARSHOT;
+
+	pOS->Teleport (source, source_pos, cScrVec (), 0);
+	return source;
 }
 
 
@@ -2578,7 +2625,7 @@ cScr_ChessCorpse::cScr_ChessCorpse (const char* pszName, int iHostObjId)
 long
 cScr_ChessCorpse::OnCreate (sScrMsg* pMsg, cMultiParm& mpReply)
 {
-	SetTimedMessage ("BeginBurial", DUR_DEATH, kSTM_OneShot);
+	SetTimedMessage ("BeginBurial", DUR_CORPSING, kSTM_OneShot);
 	return cScr_ChessPiece::OnCreate (pMsg, mpReply);
 }
 

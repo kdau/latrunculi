@@ -401,15 +401,17 @@ public:
 
 protected:
 	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
 	virtual long OnWorldDeSelect (sScrMsg* pMsg, cMultiParm& mpReply);
 
+	void TickTock ();
+	void StopTheClock ();
+
+	unsigned GetTimeRemaining ();
 	void ShowTimeRemaining ();
 
-	script_int time_remaining, time_total; // in seconds
+	script_int time_control, running; // in seconds; bool
 	bool focused; // don't persist
 };
 #else // SCR_GENSCRIPTS
@@ -481,7 +483,7 @@ protected:
 
 private:
 	void Reposition (bool direct, object square = object ());
-	void CreateAwareness (object target, uint time);
+	link CreateAwareness (object target, uint time);
 
 	void GoToSquare (object square);
 	void ArriveAtSquare (uint time);
@@ -506,6 +508,7 @@ private:
 
 	// for heralds only
 	void HeraldConcept (const std::string& concept);
+	object GetHeraldrySource ();
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessPiece","Fade",cScr_ChessPiece)
