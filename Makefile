@@ -56,7 +56,6 @@ ARFLAGS = rc
 LDFLAGS = -mwindows -mdll -Wl,--enable-auto-image-base -static-libgcc -static-libstdc++
 DLLFLAGS = --add-underscore
 
-DEBUG = DEBUG #XBETA
 ifdef DEBUG
 DEFINES := $(DEFINES) -DDEBUG
 CXXFLAGS := $(CXXFLAGS) -g -O0
