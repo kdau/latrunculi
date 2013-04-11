@@ -1018,9 +1018,10 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 {
 	if (state != NONE && !strcmp (pMsg->name, "TickTock"))
 	{
+		// update statistic
 		SService<IQuestSrv> pQS (g_pScriptManager);
-		int time = pQS->Get ("stat_time") + 1000;
-		pQS->Set ("stat_time", time, kQuestDataMission);
+		pQS->Set ("stat_time", pMsg->time, kQuestDataMission);
+		// inform chess clocks
 		for (ScriptParamsIter clock (ObjId (), "Clock"); clock; ++clock)
 			SimpleSend (ObjId (), clock.Destination (), "TickTock");
 	}
@@ -1236,10 +1237,11 @@ cScr_ChessGame::UpdateInterface ()
 	ClearSelection ();
 
 	bool have_ongoing_game =
-		game && game->GetResult () == chess::Game::ONGOING;
-	bool can_resign = state == INTERACTIVE && have_ongoing_game
-		&& game->GetActiveSide () == chess::SIDE_WHITE;
-	bool fifty_move = can_resign && game->GetFiftyMoveClock () >= 50;
+		game && game->GetResult () == chess::Game::ONGOING,
+	     can_resign = state == INTERACTIVE && have_ongoing_game
+		&& game->GetActiveSide () == chess::SIDE_WHITE,
+	     fifty_move = can_resign && game->GetFiftyMoveClock () >= 50,
+	     can_exit = state == NONE && !have_ongoing_game;
 
 	for (ScriptParamsIter flag (ObjId (), "ResignFlag"); flag; ++flag)
 	{
@@ -1257,7 +1259,6 @@ cScr_ChessGame::UpdateInterface ()
 			AddMetaProperty ("M-Transparent", flag.Destination ());
 	}
 
-	bool can_exit = state == NONE && !have_ongoing_game;
 	for (ScriptParamsIter flag (ObjId (), "ExitFlag"); flag; ++flag)
 	{
 		if (can_exit)
