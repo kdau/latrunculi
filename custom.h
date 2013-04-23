@@ -52,7 +52,7 @@ enum CustomMotion
 };
 bool PlayMotion (object ai, CustomMotion motion);
 
-#endif // SCR_GENSCRIPTS
+#endif // !SCR_GENSCRIPTS
 
 
 
@@ -87,7 +87,7 @@ protected:
 private:
 	linkset links;
 };
-#endif // SCR_GENSCRIPTS
+#endif // !SCR_GENSCRIPTS
 
 
 
@@ -118,7 +118,7 @@ private:
 	cAnsiStr data;
 	object only;
 };
-#endif // SCR_GENSCRIPTS
+#endif // !SCR_GENSCRIPTS
 
 
 
