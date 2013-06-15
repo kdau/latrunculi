@@ -319,7 +319,7 @@ ChessEngine::SetOpeningsBook (const std::string& book_file)
 {
 	WriteCommand ("setoption name OwnBook value true");
 
-	// Fruit non-portable
+	// Fruit family (not portable UCI)
 	WriteCommand ("setoption name BookFile value " + book_file);
 }
 
@@ -882,9 +882,9 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 	}
 	else // new game
 	{
-		game = new chess::Game ();
+		game = new chess::Game (); //FIXME assign side here
 		UpdateRecord ();
-		state = INTERACTIVE;
+		state = INTERACTIVE; //FIXME assumes side
 	}
 
 	try
@@ -973,7 +973,7 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 			try
 			{
 				game->RecordLoss (chess::Loss::RESIGNATION,
-					chess::SIDE_WHITE);
+					chess::SIDE_WHITE); //FIXME assumes side
 				BeginEndgame ();
 			}
 			CATCH_SCRIPT_FAILURE ("Resign",)
@@ -992,16 +992,22 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 			CATCH_SCRIPT_FAILURE ("TimeControl",)
 	}
 
-	else if (!strcmp (pMsg->message, "FiftyMove"))
+	else if (!strcmp (pMsg->message, "Draw"))
 	{
-		if (game && game->GetResult () == chess::Game::ONGOING &&
-		    game->GetFiftyMoveClock () >= 50)
+		if (game && game->GetResult () == chess::Game::ONGOING)
+		{
+			chess::Draw::Type type = chess::Draw::NONE;
+			if (game->GetFiftyMoveClock () >= 50)
+				type = chess::Draw::FIFTY_MOVE;
+			else if (game->IsThirdRepetition ())
+				type = chess::Draw::THREEFOLD_REPETITION;
 			try
 			{
-				game->RecordDraw (chess::Draw::FIFTY_MOVE);
+				game->RecordDraw (type);
 				BeginEndgame ();
 			}
-			CATCH_SCRIPT_FAILURE ("FiftyMove",)
+			CATCH_SCRIPT_FAILURE ("Draw",)
+		}
 	}
 
 	else if (!strcmp (pMsg->message, "FinishEndgame"))
@@ -1043,7 +1049,7 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 		CATCH_ENGINE_FAILURE ("StopCalculation",)
 		// the next EngineCheck will pick up the move
 
-	else if (!strcmp (pMsg->name, "HeraldBegin"))
+	else if (!strcmp (pMsg->name, "HeraldBegin")) //FIXME assumes side, can be passed to below
 	{
 		HeraldConcept (chess::SIDE_WHITE, "begin");
 		HeraldConcept (chess::SIDE_BLACK, "begin", 6500);
@@ -1197,7 +1203,7 @@ cScr_ChessGame::UpdateRecord ()
 		game->Serialize (_record);
 		record = _record.str ().data ();
 
-		// update "moves made" statistic
+		// update "moves made" statistic //FIXME assumes side? (parity)
 		SService<IQuestSrv> pQS (g_pScriptManager);
 		pQS->Set ("stat_moves", game->GetFullmoveNumber () - 1,
 			kQuestDataMission);
@@ -1239,27 +1245,28 @@ cScr_ChessGame::UpdateInterface ()
 	bool have_ongoing_game =
 		game && game->GetResult () == chess::Game::ONGOING,
 	     can_resign = state == INTERACTIVE && have_ongoing_game
-		&& game->GetActiveSide () == chess::SIDE_WHITE,
-	     fifty_move = can_resign && game->GetFiftyMoveClock () >= 50,
+		&& game->GetActiveSide () == chess::SIDE_WHITE, //FIXME assumes side
+	     can_draw = can_resign && (game->GetFiftyMoveClock () >= 50
+		|| game->IsThirdRepetition ()),
 	     can_exit = state == NONE && !have_ongoing_game;
 
-	for (ScriptParamsIter flag (ObjId (), "ResignFlag"); flag; ++flag)
+	for (ScriptParamsIter flag (ObjId (), "ResignFlag"); flag; ++flag) //FIXME per side
 	{
-		if (can_resign && !fifty_move)
+		if (can_resign && !can_draw)
 			RemoveMetaProperty ("M-Transparent", flag.Destination ());
 		else
 			AddMetaProperty ("M-Transparent", flag.Destination ());
 	}
 
-	for (ScriptParamsIter flag (ObjId (), "FiftyMoveFlag"); flag; ++flag)
+	for (ScriptParamsIter flag (ObjId (), "DrawFlag"); flag; ++flag) //FIXME per side
 	{
-		if (fifty_move)
+		if (can_draw)
 			RemoveMetaProperty ("M-Transparent", flag.Destination ());
 		else
 			AddMetaProperty ("M-Transparent", flag.Destination ());
 	}
 
-	for (ScriptParamsIter flag (ObjId (), "ExitFlag"); flag; ++flag)
+	for (ScriptParamsIter flag (ObjId (), "ExitFlag"); flag; ++flag) //FIXME per side
 	{
 		if (can_exit)
 			RemoveMetaProperty ("M-Transparent", flag.Destination ());
@@ -1355,7 +1362,7 @@ cScr_ChessGame::FinishComputing ()
 
 	std::string best_move = engine->TakeBestMove ();
 
-	// Fruit non-portable
+	// Fruit family (not UCI portable)
 	if (best_move.compare ("a1a1") == 0)
 	{
 		// the computer has resigned
@@ -1363,7 +1370,7 @@ cScr_ChessGame::FinishComputing ()
 			try
 			{
 				game->RecordLoss (chess::Loss::RESIGNATION,
-					chess::SIDE_BLACK);
+					chess::SIDE_BLACK); //FIXME assumes side
 				BeginEndgame ();
 			}
 			CATCH_SCRIPT_FAILURE ("FinishComputing",)
@@ -1421,7 +1428,7 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 		}
 
 		// increment the pieces-taken statistics
-		const char* statistic = (move->GetSide () == chess::SIDE_WHITE)
+		const char* statistic = (move->GetSide () == chess::SIDE_WHITE) //FIXME assumes side
 			? "stat_enemy_pieces" : "stat_own_pieces";
 		SService<IQuestSrv> pQS (g_pScriptManager);
 		pQS->Set (statistic, pQS->Get (statistic) + 1, kQuestDataMission);
@@ -1496,7 +1503,7 @@ cScr_ChessGame::FinishMove ()
 	if (game->GetResult () != chess::Game::ONGOING)
 		BeginEndgame ();
 
-	else if (engine && game->GetActiveSide () == chess::SIDE_BLACK)
+	else if (engine && game->GetActiveSide () == chess::SIDE_BLACK) //FIXME assumes side
 		BeginComputing ();
 
 	else
@@ -1550,8 +1557,7 @@ cScr_ChessGame::BeginEndgame ()
 	for (ScriptParamsIter clock (ObjId (), "Clock"); clock; ++clock)
 		SimpleSend (ObjId (), clock.Destination (), "StopTheClock");
 
-	if (!game->GetHistory ().empty ())
-		AnnounceEvent (game->GetHistory ().back ());
+	AnnounceEvent (game->GetLastEvent ());
 }
 
 void
@@ -1560,8 +1566,7 @@ cScr_ChessGame::FinishEndgame ()
 	if (!game) return;
 	int goal = 1;
 
-	chess::EventConstPtr event = game->GetHistory ().empty ()
-		? NULL : game->GetHistory ().back ();
+	auto event = game->GetLastEvent ();
 	auto loss = std::dynamic_pointer_cast<const chess::Loss> (event);
 
 	switch (game->GetResult ())
@@ -1570,7 +1575,7 @@ cScr_ChessGame::FinishEndgame ()
 		switch (loss ? loss->GetType () : chess::Loss::NONE)
 		{
 		case chess::Loss::CHECKMATE:
-			goal = (game->GetVictor () == chess::SIDE_WHITE)
+			goal = (game->GetVictor () == chess::SIDE_WHITE) //FIXME assumes side
 				? 0 // checkmate black
 				: 1; // keep white out of checkmate
 			break;
@@ -1613,7 +1618,7 @@ cScr_ChessGame::AnnounceEvent (const chess::EventConstPtr& event)
 
 	if (std::dynamic_pointer_cast<const chess::Draw> (event))
 	{
-		// can't be simultanous as the lines may vary
+		// can't be simultaneous as the lines may vary //FIXME assumes side?
 		HeraldConcept (chess::SIDE_WHITE, event->GetConcept (), 0);
 		HeraldConcept (chess::SIDE_BLACK, event->GetConcept (), 6500);
 	}
@@ -1695,9 +1700,9 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 		std::ofstream logbook (path);
 
 		unsigned halfmove = 0, page = 0;
-		for (auto& event : game->GetHistory ())
+		for (auto& entry : game->GetHistory ())
 		{
-			if (!event) continue;
+			if (!entry.second) continue;
 			if (halfmove % 9 == 0)
 			{
 				if (halfmove > 0)
@@ -1706,7 +1711,7 @@ cScr_ChessGame::ShowLogbook (const std::string& art)
 				logbook << chess::Game::GetLogbookHeading (page)
 					<< std::endl << std::endl;
 			}
-			std::string desc = event->GetDescription ();
+			std::string desc = entry.second->GetDescription ();
 			if (desc.length () > 0) desc[0] = std::toupper (desc[0]);
 			logbook << chess::Game::GetHalfmovePrefix (halfmove)
 				<< desc << std::endl << std::endl;
@@ -1749,7 +1754,7 @@ cScr_ChessGame::EngineFailure (const std::string& where,
 	SService<IDarkUISrv> pDUIS (g_pScriptManager);
 	pDUIS->ReadBook ("engine-problem", "parch");
 
-	// eliminate objects associated with computer opponent
+	// eliminate objects associated with computer opponent //FIXME Per side
 	for (ScriptParamsIter fence (ObjId (), "OpponentFence"); fence; ++fence)
 		DestroyObject (fence.Destination ());
 	for (ScriptParamsIter opp (ObjId (), "Opponent"); opp; ++opp)
@@ -1786,7 +1791,7 @@ cScr_ChessGame::ScriptFailure (const std::string& where,
 
 
 
-/* ChessClock */
+/* ChessClock */ //FIXME per side
 
 cScr_ChessClock::cScr_ChessClock (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),

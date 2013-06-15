@@ -110,7 +110,7 @@ enum NameCase
 	NOMINATIVE,
 	DATIVE,
 	ACCUSATIVE,
-	BECOMING
+	TRANSLATIVE
 };
 
 enum Side
@@ -165,26 +165,6 @@ private:
 	static const char CODES[N_SIDES][N_TYPES+1];
 };
 
-} // namespace chess
-namespace std {
-
-template<>
-struct hash<chess::Piece>
-{
-	size_t
-	operator () (const chess::Piece& piece) const
-	{
-		return std::hash<char> () (piece.GetCode ());
-	}
-};
-
-} // namespace std
-namespace chess {
-
-typedef std::unordered_multimap<Piece, Square> PieceSquares;
-typedef std::pair<PieceSquares::const_iterator, PieceSquares::const_iterator>
-	PieceSquaresRange;
-
 
 
 /**
@@ -195,7 +175,6 @@ typedef std::pair<PieceSquares::const_iterator, PieceSquares::const_iterator>
 class Event;
 typedef std::shared_ptr<Event> EventPtr;
 typedef std::shared_ptr<const Event> EventConstPtr;
-typedef std::vector<EventConstPtr> Events;
 
 class Event
 {
@@ -275,11 +254,11 @@ public:
 		STALEMATE,
 		DEAD_POSITION,
 
-		// entered manually; only valid if conditions are present
+		// entered manually; only accepted if conditions are present
 		FIFTY_MOVE,
-
-		// entered manually; UI must detect and/or confirm conditions
 		THREEFOLD_REPETITION,
+
+		// entered manually; UI must broker
 		BY_AGREEMENT
 	};
 
@@ -453,12 +432,14 @@ public:
 	bool IsInCheck (Side side = SIDE_NONE) const; // default: active side
 	bool IsDead () const;
 
+	// compares positions according to threefold repetition rule
+	bool operator == (const Position& rhs) const;
+
 	virtual void MakeMove (const MovePtr& move);
 
 protected:
 	char& operator [] (const Square& square);
 	const char& operator [] (const Square& square) const;
-	PieceSquaresRange GetSquaresWith (const Piece& piece) const;
 
 	void EndGame ();
 
@@ -472,9 +453,7 @@ private:
 
 	static const char INITIAL_BOARD[N_RANKS * N_FILES + 1];
 	static const Side INITIAL_SIDE;
-
-	void UpdatePieceSquares ();
-	PieceSquares piece_squares;
+	static const unsigned INITIAL_CASTLING[N_SIDES];
 };
 
 
@@ -482,6 +461,9 @@ private:
 /**
  ** Game
  **/
+
+typedef std::pair<Position, EventConstPtr> HistoryEntry;
+typedef std::vector<HistoryEntry> History;
 
 class Game : public Position
 {
@@ -506,7 +488,10 @@ public:
 
 	Result GetResult () const { return result; }
 	Side GetVictor () const { return victor; }
-	const Events& GetHistory () const { return history; }
+
+	const History& GetHistory () const { return history; }
+	EventConstPtr GetLastEvent () const;
+	bool IsThirdRepetition () const;
 
 	const Moves& GetPossibleMoves () const { return possible_moves; }
 	MovePtr FindPossibleMove (const Square& from, const Square& to) const;
@@ -519,12 +504,13 @@ public:
 	void RecordDraw (Draw::Type type);
 
 private:
+	void RecordEvent (const EventConstPtr& event);
 	void EndGame (Result result, Side victor);
 	void DetectEndgames ();
 
 	Result result;
 	Side victor;
-	Events history;
+	History history;
 
 	// possible moves
 

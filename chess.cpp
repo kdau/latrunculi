@@ -22,6 +22,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 
@@ -277,7 +278,7 @@ Piece::GetName (NameCase name_case) const
 	{
 	case NOMINATIVE: msgid = "piece_nom_"; break;
 	case ACCUSATIVE: msgid = "piece_acc_"; break;
-	case BECOMING: msgid = "piece_indef_"; break;
+	case TRANSLATIVE: msgid = "piece_tra_"; break;
 	default: return std::string ();
 	}
 
@@ -562,7 +563,7 @@ Move::GetDescription () const
 		GetPiece ().GetName (NOMINATIVE).data (),
 		GetFrom ().GetCode ().data (),
 		GetTo ().GetCode ().data (),
-		GetPromotion ().GetName (BECOMING).data ());
+		GetPromotion ().GetName (TRANSLATIVE).data ());
 }
 
 std::string
@@ -629,7 +630,7 @@ Capture::GetDescription () const
 		GetFrom ().GetCode ().data (),
 		GetCapturedPiece ().GetName (ACCUSATIVE).data (),
 		GetTo ().GetCode ().data (),
-		GetPromotion ().GetName (BECOMING).data ());
+		GetPromotion ().GetName (TRANSLATIVE).data ());
 }
 
 bool
@@ -803,10 +804,9 @@ Position::Position ()
 	  fifty_move_clock (0),
 	  fullmove_number (1)
 {
-	memcpy (board, INITIAL_BOARD, N_RANKS * N_FILES);
-	for (unsigned side = 0; side < N_SIDES; ++side)
-		castling_options[side] = Castling::BOTH;
-	UpdatePieceSquares ();
+	std::memcpy (board, INITIAL_BOARD, sizeof board);
+	std::memcpy (castling_options, INITIAL_CASTLING,
+		sizeof castling_options);
 }
 
 Position::Position (const Position& position)
@@ -815,10 +815,9 @@ Position::Position (const Position& position)
 	  fifty_move_clock (position.fifty_move_clock),
 	  fullmove_number (position.fullmove_number)
 {
-	memcpy (board, position.board, N_RANKS * N_FILES);
-	for (unsigned side = 0; side < N_SIDES; ++side)
-		castling_options[side] = position.castling_options[side];
-	UpdatePieceSquares ();
+	std::memcpy (board, position.board, sizeof board);
+	std::memcpy (castling_options, position.castling_options,
+		sizeof castling_options);
 }
 
 #define fen_throw_invalid(detail) \
@@ -929,8 +928,6 @@ Position::Position (std::istream& fen)
 
 	if (!fen) fen_throw_invalid ("missing fullmove number");
 	fen >> fullmove_number;
-
-	UpdatePieceSquares ();
 }
 
 void
@@ -1045,9 +1042,11 @@ bool
 Position::IsInCheck (Side side) const
 {
 	if (side == SIDE_NONE) side = GetActiveSide ();
-	auto range = GetSquaresWith (Piece (side, Piece::KING));
-	for (auto square = range.first; square != range.second; ++square)
-		if (IsUnderAttack (square->second, Opponent (side)))
+	Side opponent = Opponent (side);
+	char king = Piece (side, Piece::KING).GetCode ();
+
+	for (auto square = Square::BEGIN; square.Valid (); ++square)
+		if ((*this)[square] == king && IsUnderAttack (square, opponent))
 			return true;
 	return false;
 }
@@ -1059,16 +1058,17 @@ Position::IsDead () const
 	//   none; one knight; any number of bishops of same square color
 
 	unsigned n_knights = 0, n_bishops[Square::N_COLORS] = { 0 };
-	for (auto& ps : piece_squares)
-		switch (ps.first.type)
+	for (auto square = Square::BEGIN; square.Valid (); ++square)
+		switch (GetPieceAt (square).type)
 		{
-		case Piece::KING:
-			break; // kings don't count here
+		case Piece::KING: // kings don't count here
+		case Piece::NONE:
+			break;
 		case Piece::KNIGHT:
 			++n_knights;
 			break;
 		case Piece::BISHOP:
-			++n_bishops[ps.second.GetColor ()];
+			++n_bishops[square.GetColor ()];
 			break;
 		default:
 			return false; // pawn, rook, or queen = not dead
@@ -1087,6 +1087,17 @@ Position::IsDead () const
 	       (n_bishops[Square::DARK] == 0);
 }
 
+bool
+Position::operator == (const Position& rhs) const
+{
+	return std::memcmp (board, rhs.board, sizeof board) == 0 &&
+		active_side == rhs.active_side &&
+		std::memcmp (castling_options, rhs.castling_options,
+			sizeof castling_options) == 0 &&
+		(en_passant_square == rhs.en_passant_square ||
+			(!en_passant_square.Valid () &&
+			 !rhs.en_passant_square.Valid ()));
+}
 
 void
 Position::MakeMove (const MovePtr& move)
@@ -1094,22 +1105,20 @@ Position::MakeMove (const MovePtr& move)
 	if (!move || !move->Valid ())
 		throw std::runtime_error ("invalid move specified");
 
-	// clear origin square
-	(*this)[move->GetFrom ()] = Piece::NONE_CODE;
-
 	// promote piece, if applicable
 	Piece piece = move->GetPiece ();
 	Piece::Type orig_type = piece.type;
 	if (move->GetPromotion ().Valid ())
 		piece.type = move->GetPromotion ().type;
 
+	// move piece
+	(*this)[move->GetFrom ()] = Piece::NONE_CODE;
+	(*this)[move->GetTo ()] = piece.GetCode ();
+
 	// clear captured square, if applicable
 	auto capture = std::dynamic_pointer_cast<const Capture> (move);
 	if (capture)
 		(*this)[capture->GetCapturedSquare ()] = Piece::NONE_CODE;
-
-	// place piece in target square
-	(*this)[move->GetTo ()] = piece.GetCode ();
 
 	// move castling rook, if applicable
 	if (auto castling = std::dynamic_pointer_cast<const Castling> (move))
@@ -1150,9 +1159,6 @@ Position::MakeMove (const MovePtr& move)
 	// update fullmove number
 	if (move->GetSide () == SIDE_BLACK)
 		++fullmove_number;
-
-	// update piece_squares
-	UpdatePieceSquares ();
 }
 
 char&
@@ -1169,12 +1175,6 @@ Position::operator [] (const Square& square) const
 	if (!square.Valid ())
 		throw std::invalid_argument ("invalid square specified");
 	return board[square.rank][square.file];
-}
-
-PieceSquaresRange
-Position::GetSquaresWith (const Piece& piece) const
-{
-	return piece_squares.equal_range (piece);
 }
 
 void
@@ -1196,17 +1196,8 @@ Position::INITIAL_BOARD[N_RANKS * N_FILES + 1] =
 const Side
 Position::INITIAL_SIDE = SIDE_WHITE;
 
-void
-Position::UpdatePieceSquares ()
-{
-	piece_squares.clear ();
-	for (auto square = Square::BEGIN; square.Valid (); ++square)
-	{
-		Piece piece = (*this)[square];
-		if (piece.Valid ())
-			piece_squares.insert ({ piece, square });
-	}
-}
+const unsigned
+Position::INITIAL_CASTLING[N_SIDES] = { Castling::BOTH, Castling::BOTH };
 
 
 
@@ -1236,7 +1227,7 @@ Game::Game (std::istream& record)
 		EventPtr event = Event::FromMLAN (token, event_side);
 		if (!event)
 			throw std::invalid_argument ("invalid event");
-		history.push_back (event);
+		RecordEvent (event);
 
 		if (auto loss = std::dynamic_pointer_cast<Loss> (event))
 		{
@@ -1266,9 +1257,9 @@ void
 Game::Serialize (std::ostream& record)
 {
 	Position::Serialize (record);
-	for (auto& event : history)
-		if (event)
-			record << ' ' << event->GetMLAN ();
+	for (auto& entry : history)
+		if (entry.second)
+			record << ' ' << entry.second->GetMLAN ();
 }
 
 std::string
@@ -1289,6 +1280,22 @@ Game::GetHalfmovePrefix (unsigned halfmove)
 }
 
 // status and analysis
+
+EventConstPtr
+Game::GetLastEvent () const
+{
+	return history.empty () ? EventConstPtr () : history.back ().second;
+}
+
+bool
+Game::IsThirdRepetition () const
+{
+	unsigned repetitions = 1;
+	for (auto& entry : history)
+		if (*this == entry.first && ++repetitions == 3)
+			return true;
+	return false;
+}
 
 MovePtr
 Game::FindPossibleMove (const Square& from, const Square& to) const
@@ -1336,8 +1343,8 @@ Game::MakeMove (const MovePtr& move)
 	if (!possible)
 		throw std::runtime_error ("move not currently possible");
 
+	RecordEvent (move);
 	Position::MakeMove (move);
-	history.push_back (move);
 	UpdatePossibleMoves ();
 	DetectEndgames ();
 }
@@ -1361,7 +1368,7 @@ Game::RecordLoss (Loss::Type type, Side side)
 		throw std::runtime_error ("invalid loss type");
 	}
 
-	history.push_back (std::make_shared<Loss> (type, side));
+	RecordEvent (std::make_shared<Loss> (type, side));
 	EndGame (WON, Opponent (side));
 }
 
@@ -1380,15 +1387,24 @@ Game::RecordDraw (Draw::Type type)
 			throw std::runtime_error ("fifty move rule not in effect");
 		break;
 	case Draw::THREEFOLD_REPETITION:
+		if (!IsThirdRepetition ())
+			throw std::runtime_error ("threefold repetition rule not in effect");
+		break;
 	case Draw::BY_AGREEMENT:
-		// accept unconditionally; UI must detect/confirm conditions
+		// accept unconditionally; UI must broker
 		break;
 	default:
 		throw std::runtime_error ("invalid draw type");
 	}
 
-	history.push_back (std::make_shared<Draw> (type));
+	RecordEvent (std::make_shared<Draw> (type));
 	EndGame (DRAWN, SIDE_NONE);
+}
+
+void
+Game::RecordEvent (const EventConstPtr& event)
+{
+	history.push_back (HistoryEntry (*this, event));
 }
 
 void
@@ -1409,14 +1425,14 @@ Game::DetectEndgames ()
 	// detect dead positions
 	if (IsDead ())
 	{
-		history.push_back (std::make_shared<Draw> (Draw::DEAD_POSITION));
+		RecordEvent (std::make_shared<Draw> (Draw::DEAD_POSITION));
 		EndGame (DRAWN, SIDE_NONE);
 	}
 
 	// detect checkmate
 	else if (possible_moves.empty () && IsInCheck ())
 	{
-		history.push_back (std::make_shared<Loss>
+		RecordEvent (std::make_shared<Loss>
 			(Loss::CHECKMATE, GetActiveSide ()));
 		EndGame (WON, Opponent (GetActiveSide ()));
 	}
@@ -1424,7 +1440,7 @@ Game::DetectEndgames ()
 	// detect stalemate
 	else if (possible_moves.empty ())
 	{
-		history.push_back (std::make_shared<Draw> (Draw::STALEMATE));
+		RecordEvent (std::make_shared<Draw> (Draw::STALEMATE));
 		EndGame (DRAWN, SIDE_NONE);
 	}
 }
