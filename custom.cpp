@@ -817,7 +817,7 @@ cScr_ChessScenario::OnWorldSelect (sScrMsg*, cMultiParm&)
 	pDS->GetString (buffer, "titles", msgid, "", "strings");
 
 	ShowString (buffer, CalcTextTime (buffer),
-		GetChessSetColor (GetObjectParamInt (ObjId (), "WhiteSet")));
+		GetChessSetColor (GetObjectParamInt (ObjId (), "WhiteSet"))); //FIXME assumes side?
 	buffer.Free ();
 
 	return 0;
@@ -859,6 +859,7 @@ cScr_ChessGame::cScr_ChessGame (const char* pszName, int iHostObjId)
 	: cBaseScript (pszName, iHostObjId),
 	  game (NULL), engine (NULL),
 	  SCRIPT_VAROBJ (ChessGame, record, iHostObjId),
+	  SCRIPT_VAROBJ (ChessGame, side, iHostObjId),
 	  SCRIPT_VAROBJ (ChessGame, state, iHostObjId)
 {}
 
@@ -867,24 +868,25 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 {
 	state.Init (NONE);
 
+	SService<IDataSrv> pDS (g_pScriptManager);
+	side.Init (pDS->RandInt (chess::SIDE_WHITE, chess::SIDE_BLACK));
+
 	if (record.Valid ()) // existing game
 	{
 		std::istringstream _record ((const char*) record);
 		try { game = new chess::Game (_record); }
-		CATCH_SCRIPT_FAILURE ("BeginScript", game = NULL; return 0)
+		CATCH_SCRIPT_FAILURE ("BeginScript", game = NULL; return 0) //FIXME pre-Sim clean?
 
-		if (state == COMPUTING) // need to prompt the engine
-			SetTimedMessage ("BeginComputing", 10, kSTM_OneShot);
-		else if (game->GetResult () != chess::Game::ONGOING)
+		if (game->GetResult () != chess::Game::ONGOING)
 			return 0; // don't start the engine at all
 		else if (state == NONE) // ???
 			state = INTERACTIVE;
 	}
 	else // new game
 	{
-		game = new chess::Game (); //FIXME assign side here
+		game = new chess::Game ();
 		UpdateRecord ();
-		state = INTERACTIVE; //FIXME assumes side
+		// remainder of preparations in OnSim
 	}
 
 	try
@@ -910,8 +912,11 @@ cScr_ChessGame::OnBeginScript (sScrMsg*, cMultiParm&)
 	catch (std::exception& e)
 	{
 		engine = NULL;
-		SetTimedMessage ("EngineFailure", 10, kSTM_OneShot, e.what ());
+		SetTimedMessage ("EngineFailure", 10, kSTM_OneShot, e.what ()); //FIXME pre-Sim clean?
 	}
+
+	if (state == COMPUTING) // need to prompt the engine
+		BeginComputing (); //FIXME pre-Sim clean?
 
 	return 0;
 }
@@ -937,6 +942,8 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 {
 	if (!pMsg->fStarting || !game) return 0;
 
+	//FIXME What needs to be done in the side == BLACK case?
+
 	if (object board_origin = StrToObject ("BoardOrigin"))
 		ArrangeBoard (board_origin, false);
 	else
@@ -952,6 +959,10 @@ cScr_ChessGame::OnSim (sSimMsg* pMsg, cMultiParm&)
 	SetTimedMessage ("HeraldBegin", 250, kSTM_OneShot);
 	SetTimedMessage ("TickTock", 1000, kSTM_Periodic);
 	SetTimedMessage ("EngineCheck", 250, kSTM_Periodic);
+
+	state = MOVING; // required by FinishMove
+	FinishMove (); // prepare for the "next" (first) move
+
 	return 0;
 }
 
@@ -973,7 +984,7 @@ cScr_ChessGame::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
 			try
 			{
 				game->RecordLoss (chess::Loss::RESIGNATION,
-					chess::SIDE_WHITE); //FIXME assumes side
+					chess::Side (int (side)));
 				BeginEndgame ();
 			}
 			CATCH_SCRIPT_FAILURE ("Resign",)
@@ -1041,15 +1052,12 @@ cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
 			FinishComputing ();
 	}
 
-	else if (engine && !strcmp (pMsg->name, "BeginComputing"))
-		BeginComputing ();
-
 	else if (engine && !strcmp (pMsg->name, "StopCalculation"))
 		try { engine->StopCalculation (); }
 		CATCH_ENGINE_FAILURE ("StopCalculation",)
 		// the next EngineCheck will pick up the move
 
-	else if (!strcmp (pMsg->name, "HeraldBegin")) //FIXME assumes side, can be passed to below
+	else if (!strcmp (pMsg->name, "HeraldBegin")) //FIXME assumes side?, can be passed to below
 	{
 		HeraldConcept (chess::SIDE_WHITE, "begin");
 		HeraldConcept (chess::SIDE_BLACK, "begin", 6500);
@@ -1245,7 +1253,7 @@ cScr_ChessGame::UpdateInterface ()
 	bool have_ongoing_game =
 		game && game->GetResult () == chess::Game::ONGOING,
 	     can_resign = state == INTERACTIVE && have_ongoing_game
-		&& game->GetActiveSide () == chess::SIDE_WHITE, //FIXME assumes side
+		&& game->GetActiveSide () == side,
 	     can_draw = can_resign && (game->GetFiftyMoveClock () >= 50
 		|| game->IsThirdRepetition ()),
 	     can_exit = state == NONE && !have_ongoing_game;
@@ -1370,7 +1378,7 @@ cScr_ChessGame::FinishComputing ()
 			try
 			{
 				game->RecordLoss (chess::Loss::RESIGNATION,
-					chess::SIDE_BLACK); //FIXME assumes side
+					chess::Opponent (chess::Side (int (side))));
 				BeginEndgame ();
 			}
 			CATCH_SCRIPT_FAILURE ("FinishComputing",)
@@ -1428,7 +1436,7 @@ cScr_ChessGame::BeginMove (const chess::MovePtr& move, bool from_engine)
 		}
 
 		// increment the pieces-taken statistics
-		const char* statistic = (move->GetSide () == chess::SIDE_WHITE) //FIXME assumes side
+		const char* statistic = (move->GetSide () == side)
 			? "stat_enemy_pieces" : "stat_own_pieces";
 		SService<IQuestSrv> pQS (g_pScriptManager);
 		pQS->Set (statistic, pQS->Get (statistic) + 1, kQuestDataMission);
@@ -1503,7 +1511,7 @@ cScr_ChessGame::FinishMove ()
 	if (game->GetResult () != chess::Game::ONGOING)
 		BeginEndgame ();
 
-	else if (engine && game->GetActiveSide () == chess::SIDE_BLACK) //FIXME assumes side
+	else if (engine && game->GetActiveSide () != side)
 		BeginComputing ();
 
 	else
@@ -1575,9 +1583,9 @@ cScr_ChessGame::FinishEndgame ()
 		switch (loss ? loss->GetType () : chess::Loss::NONE)
 		{
 		case chess::Loss::CHECKMATE:
-			goal = (game->GetVictor () == chess::SIDE_WHITE) //FIXME assumes side
-				? 0 // checkmate black
-				: 1; // keep white out of checkmate
+			goal = (game->GetVictor () == side)
+				? 0 // checkmate opponent
+				: 1; // keep self out of checkmate
 			break;
 		case chess::Loss::RESIGNATION:
 			goal = 3; // don't resign
@@ -1754,7 +1762,7 @@ cScr_ChessGame::EngineFailure (const std::string& where,
 	SService<IDarkUISrv> pDUIS (g_pScriptManager);
 	pDUIS->ReadBook ("engine-problem", "parch");
 
-	// eliminate objects associated with computer opponent //FIXME Per side
+	// eliminate objects associated with computer opponent //FIXME per side
 	for (ScriptParamsIter fence (ObjId (), "OpponentFence"); fence; ++fence)
 		DestroyObject (fence.Destination ());
 	for (ScriptParamsIter opp (ObjId (), "Opponent"); opp; ++opp)

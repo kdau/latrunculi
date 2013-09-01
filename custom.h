@@ -371,6 +371,7 @@ private:
 	ChessEngine* engine;
 
 	script_str record;
+	script_int side; // chess::Side
 
 	enum State
 	{
