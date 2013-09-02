@@ -27,9 +27,6 @@
 
 #if !SCR_GENSCRIPTS
 
-#include <iostream>
-#include <ext/stdio_filebuf.h>
-
 #include "BaseScript.h"
 #include "scriptvars.h"
 #include "chess.h"
@@ -52,127 +49,8 @@ enum CustomMotion
 };
 bool PlayMotion (object ai, CustomMotion motion);
 
-#endif // !SCR_GENSCRIPTS
+void FaceObject (object ai, object face);
 
-
-
-/**
- * Iterator: LinkIter
- *
- * Iterates through links that share a source, destination, and/or flavor.
- * Subclasses can further limit the set (for example, based on data) by
- * overriding the Matches function (and calling AdvanceToMatch in their ctors).
- */
-#if !SCR_GENSCRIPTS
-class LinkIter
-{
-public:
-	LinkIter (object source, object dest, const char* flavor);
-	virtual ~LinkIter () noexcept;
-
-	virtual operator bool () const;
-	virtual LinkIter& operator++ ();
-
-	operator link () const;
-	object Source () const;
-	object Destination () const;
-
-	const void* GetData () const;
-	void GetDataField (const char* field, cMultiParm& value) const;
-
-protected:
-	void AdvanceToMatch ();
-	virtual bool Matches () { return true; }
-
-private:
-	linkset links;
-};
-#endif // !SCR_GENSCRIPTS
-
-
-
-/**
- * Iterator: ScriptParamsIter
- *
- * Iterates through ScriptParams links from a source object that share a certain
- * link data string. If the string is "Self" or "Player", iterates over only the
- * source object or the object named Player, respectively.
- */
-#if !SCR_GENSCRIPTS
-class ScriptParamsIter : public LinkIter
-{
-public:
-	ScriptParamsIter (object source, const char* data,
-		object destination = object ());
-	virtual ~ScriptParamsIter () noexcept;
-
-	virtual operator bool () const;
-	virtual ScriptParamsIter& operator++ ();
-
-	operator object () const;
-
-protected:
-	virtual bool Matches ();
-
-private:
-	cAnsiStr data;
-	object only;
-};
-#endif // !SCR_GENSCRIPTS
-
-
-
-#if !SCR_GENSCRIPTS
-/**
- * Utility Class: ChessEngine
- *
- * Manages a connection to a UCI chess engine (customized for Fruit).
- */
-class ChessEngine
-{
-public:
-	ChessEngine (const std::string& executable);
-	~ChessEngine ();
-
-	enum Difficulty
-	{
-		DIFF_EASY = 0,
-		DIFF_NORMAL,
-		DIFF_HARD
-	};
-
-	void SetDifficulty (Difficulty difficulty);
-	void SetOpeningsBook (const std::string& book_file);
-	void ClearOpeningsBook ();
-
-	void StartGame (const chess::Position* initial_position);
-	void UpdatePosition (const chess::Position& position);
-
-	bool IsCalculating () const { return calculating; }
-	unsigned StartCalculation (); // returns expected calculation time in ms
-	void StopCalculation ();
-
-	const std::string& PeekBestMove () const { return best_move; }
-	std::string TakeBestMove ();
-
-	void WaitUntilReady ();
-
-private:
-	void LaunchEngine (const std::string& executable);
-
-	void ReadReplies (const std::string& desired_reply);
-	bool HasReply ();
-
-	void WriteCommand (const std::string& command);
-
-	typedef __gnu_cxx::stdio_filebuf<char> EngineBuf;
-	EngineBuf* ein_buf; std::istream* ein; HANDLE ein_h;
-	EngineBuf* eout_buf; std::ostream* eout;
-
-	Difficulty difficulty;
-	std::string best_move;
-	bool started, calculating;
-};
 #endif // !SCR_GENSCRIPTS
 
 

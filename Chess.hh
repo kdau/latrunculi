@@ -1,12 +1,11 @@
 /******************************************************************************
- *  chess.h
+ *  Chess.hh
  *
- *  Custom scripts for A Nice Game of Chess
  *  Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
+ *  the Free Software Foundation; either version 3 of the License, or
  *  (at your option) any later version.
  *
  *  This program is distributed in the hope that it will be useful,
@@ -19,93 +18,22 @@
  *
  *****************************************************************************/
 
-#ifndef CHESS_H
-#define CHESS_H
-#if !SCR_GENSCRIPTS
+#ifndef CHESS_HH
+#define CHESS_HH
 
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
-namespace chess {
+namespace Chess {
 
 
 
-/**
- ** Square (File, Rank)
- **/
+// String utilities
 
-enum File
-{
-	FILE_NONE = -1,
-	FILE_A,
-	FILE_B,
-	FILE_C,
-	FILE_D,
-	FILE_E,
-	FILE_F,
-	FILE_G,
-	FILE_H,
-	N_FILES
-};
+typedef std::string String;
 
-enum Rank
-{
-	RANK_NONE = -1,
-	RANK_1,
-	RANK_2,
-	RANK_3,
-	RANK_4,
-	RANK_5,
-	RANK_6,
-	RANK_7,
-	RANK_8,
-	N_RANKS
-};
-
-struct Square
-{
-	Square (File file = FILE_NONE, Rank rank = RANK_NONE);
-	Square (const std::string& code);
-
-	bool Valid () const;
-	bool operator == (const Square& rhs) const;
-	bool operator != (const Square& rhs) const;
-
-	std::string GetCode () const;
-
-	enum Color
-	{
-		NONE = -1,
-		LIGHT,
-		DARK,
-		N_COLORS
-	};
-	Color GetColor () const;
-
-	typedef std::pair<int, int> Delta;
-	Square Offset (Delta delta) const;
-	Square Offset (int delta_file, int delta_rank) const;
-
-	Square& operator ++ ();
-	static const Square BEGIN;
-
-	void Clear ();
-
-	File file;
-	Rank rank;
-};
-
-typedef std::vector<Square> Squares;
-
-
-
-/**
- ** Piece (Side, PieceType)
- **/
-
-enum NameCase
+enum class Case
 {
 	NOMINATIVE,
 	DATIVE,
@@ -113,25 +41,82 @@ enum NameCase
 	TRANSLATIVE
 };
 
-enum Side
+String translate_format (const String& format_msgid, ...); //FIXME Don't use printf.
+
+
+
+// Modified long algebraic notation, created here for serialization of history.
+typedef String MLAN;
+
+
+
+// Square (File, Rank)
+
+enum class File : char { NONE = -1, A, B, C, D, E, F, G, H, _COUNT };
+
+enum class Rank : char { NONE = -1, R1, R2, R3, R4, R5, R6, R7, R8, _COUNT };
+
+struct Square
 {
-	SIDE_NONE = -1,
-	SIDE_WHITE,
-	SIDE_BLACK,
-	N_SIDES
+	Square ();
+	Square (File, Rank);
+	File file;
+	Rank rank;
+
+	bool is_valid () const;
+	bool operator == (const Square&) const;
+	bool operator != (const Square&) const;
+
+	explicit Square (const String& code);
+	String get_code () const;
+
+	enum class Color { NONE = -1, LIGHT, DARK };
+	Color get_color () const;
+
+	struct Delta { int file, rank; };
+	Square offset (Delta) const;
+
+	static const Square BEGIN;
+	static const size_t COUNT;
+	Square& operator ++ ();
+
+	void clear ();
 };
 
-bool SideValid (Side side);
-char SideCode (Side side);
-Side SideFromCode (char code);
-std::string SideName (Side side, NameCase name_case);
-int SideFacing (Side side);
-Side Opponent (Side side);
+typedef std::vector<Square> Squares;
+
+
+
+// Side
+
+struct Side
+{
+	enum Value { NONE = -1, WHITE, BLACK };
+
+	Side (Value = NONE);
+	Value value;
+
+	bool is_valid () const;
+	bool operator == (const Side&) const;
+	bool operator != (const Side&) const;
+
+	explicit Side (char code);
+	char get_code () const;
+
+	String get_name (Case) const;
+
+	int get_facing_direction () const;
+
+	Side get_opponent () const;
+};
+
+
+
+// Piece
 
 struct Piece
 {
-
-	enum Type
+	enum class Type
 	{
 		NONE = -1,
 		KING,
@@ -140,166 +125,177 @@ struct Piece
 		BISHOP,
 		KNIGHT,
 		PAWN,
-		N_TYPES
+		_COUNT
 	};
 
-	Piece (Side side = SIDE_NONE, Type type = NONE);
-	Piece (char code);
-
-	bool Valid () const;
-	bool operator == (const Piece& rhs) const;
-	bool operator != (const Piece& rhs) const;
-
-	char GetCode () const;
-	void SetCode (char code);
-	static const char NONE_CODE;
-
-	std::string GetName (NameCase name_case) const;
-
-	Rank GetInitialRank () const;
-
+	Piece ();
+	Piece (Side, Type);
 	Side side;
 	Type type;
 
+	bool is_valid () const;
+	bool operator == (const Piece&) const;
+	bool operator != (const Piece&) const;
+
+	explicit Piece (char code);
+	char get_code () const;
+	void set_code (char code);
+	static const char NONE_CODE;
+
+	String get_name (Case) const;
+
+	Rank get_initial_rank () const;
+
 private:
-	static const char CODES[N_SIDES][N_TYPES+1];
+	static const char* get_codes (Side);
 };
 
 
 
-/**
- ** Event (Loss, Draw, Move, Capture, EnPassantCapture,
- **        TwoSquarePawnMove, Castling)
- **/
-
-class Event;
-typedef std::shared_ptr<Event> EventPtr;
-typedef std::shared_ptr<const Event> EventConstPtr;
+// Event
 
 class Event
 {
 public:
-	virtual ~Event () {}
+	typedef std::shared_ptr<Event> Ptr;
+	typedef std::shared_ptr<const Event> ConstPtr;
 
-	bool Valid () const { return valid; }
+	virtual ~Event ();
 
-	virtual Side GetSide () const = 0;
+	bool is_valid () const { return valid; }
 
-	// modified long algebraic notation, for serialization of history
-	virtual std::string GetMLAN () const = 0;
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
+	virtual Side get_side () const = 0;
 
-	virtual std::string GetDescription () const = 0;
-	virtual std::string GetConcept () const = 0;
+	virtual MLAN serialize () const = 0;
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+
+	virtual String get_description () const = 0;
+	virtual String get_concept () const = 0;
 
 protected:
-	Event () : valid (true) {}
+	Event ();
 	Event (const Event&) = delete;
 
-	void Invalidate () { valid = false; }
+	void invalidate ();
 
-	friend bool operator == (const Event& lhs, const Event& rhs);
-	friend bool operator != (const Event& lhs, const Event& rhs);
-	virtual bool Equals (const Event& rhs) const = 0;
+	friend bool operator == (const Event&, const Event&);
+	friend bool operator != (const Event&, const Event&);
+	virtual bool equals (const Event&) const = 0;
 
 private:
 	bool valid;
 };
 
-bool operator == (const Event& lhs, const Event& rhs);
-bool operator != (const Event& lhs, const Event& rhs);
+bool operator == (const Event&, const Event&);
+bool operator != (const Event&, const Event&);
+
+
+
+// Loss
 
 class Loss : public Event
 {
 public:
-	enum Type
+	enum class Type
 	{
 		NONE = -1,
 
-		// detected and entered automatically
+		// Detected and entered automatically.
 		CHECKMATE,
 
-		// entered manually; UI must detect and/or confirm conditions
+		// Entered manually; UI must broker or detect.
 		RESIGNATION,
 		TIME_CONTROL
 	};
 
-	Loss (Type type, Side side);
+	Loss (Type, Side);
 
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
-	virtual std::string GetMLAN () const;
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+	virtual MLAN serialize () const;
 
-	virtual Side GetSide () const { return side; }
-	Type GetType () const { return type; }
+	virtual Side get_side () const;
+	Type get_type () const { return type; }
 
-	virtual std::string GetDescription () const;
-	virtual std::string GetConcept () const;
+	virtual String get_description () const;
+	virtual String get_concept () const;
 
 protected:
-	virtual bool Equals (const Event& rhs) const;
+	virtual bool equals (const Event&) const;
 
 private:
 	Type type;
 	Side side;
 };
 
+
+
+// Draw
+
 class Draw : public Event
 {
 public:
-	enum Type
+	enum class Type
 	{
 		NONE = -1,
 
-		// detected and entered automatically
+		// Detected and entered automatically.
 		STALEMATE,
 		DEAD_POSITION,
 
-		// entered manually; only accepted if conditions are present
+		// Entered manually; only accepted if conditions are present.
 		FIFTY_MOVE,
 		THREEFOLD_REPETITION,
 
-		// entered manually; UI must broker
+		// Entered manually; UI must broker.
 		BY_AGREEMENT
 	};
 
-	Draw (Type type);
+	explicit Draw (Type);
 
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
-	virtual std::string GetMLAN () const;
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+	virtual MLAN serialize () const;
 
-	virtual Side GetSide () const { return SIDE_NONE; }
-	Type GetType () const { return type; }
+	virtual Side get_side () const;
+	Type get_type () const { return type; }
 
-	virtual std::string GetDescription () const;
-	virtual std::string GetConcept () const;
+	virtual String get_description () const;
+	virtual String get_concept () const;
 
 protected:
-	virtual bool Equals (const Event& rhs) const;
+	virtual bool equals (const Event&) const;
 
 private:
 	Type type;
 };
 
+
+
+// Move
+
 class Move : public Event
 {
 public:
-	Move (const Piece& piece, const Square& from, const Square& to);
+	typedef std::shared_ptr<const Move> Ptr;
 
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
-	virtual std::string GetMLAN () const;
+	Move (const Piece&, const Square& from, const Square& to);
 
-	virtual Side GetSide () const { return piece.side; }
-	Piece GetPiece () const { return piece; }
-	Square GetFrom () const { return from; }
-	Square GetTo () const { return to; }
-	Piece GetPromotion () const { return Piece (piece.side, promotion); }
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+	virtual MLAN serialize () const;
 
-	std::string GetUCICode () const;
-	virtual std::string GetDescription () const;
-	virtual std::string GetConcept () const;
+	virtual Side get_side () const;
+	Piece get_piece () const { return piece; }
+	Square get_from () const { return from; }
+	Square get_to () const { return to; }
+	Piece::Type get_promotion () const { return promotion; }
+
+	Piece get_promoted_piece () const;
+
+	String get_uci_code () const;
+	virtual String get_description () const;
+	virtual String get_concept () const;
 
 protected:
-	virtual bool Equals (const Event& rhs) const;
+	virtual bool equals (const Event&) const;
 
 private:
 	Piece piece;
@@ -308,25 +304,28 @@ private:
 	Piece::Type promotion;
 };
 
-typedef std::shared_ptr<const Move> MovePtr;
-typedef std::vector<MovePtr> Moves;
+typedef std::vector<Move::Ptr> Moves;
+
+
+
+// Move types: Move, Capture, EnPassantCapture, TwoSquarePawnMove, Castling
 
 class Capture : public Move
 {
 public:
-	Capture (const Piece& piece, const Square& from,
-		const Square& to, const Piece& captured_piece);
+	Capture (const Piece&, const Square& from,
+		const Square& to, const Piece& captured);
 
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
-	virtual std::string GetMLAN () const;
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+	virtual MLAN serialize () const;
 
-	const Piece& GetCapturedPiece () const { return captured_piece; }
-	virtual Square GetCapturedSquare () const { return GetTo (); }
+	const Piece& get_captured_piece () const { return captured_piece; }
+	virtual Square get_captured_square () const;
 
-	virtual std::string GetDescription () const;
+	virtual String get_description () const;
 
 protected:
-	virtual bool Equals (const Event& rhs) const;
+	virtual bool equals (const Event&) const;
 
 private:
 	Piece captured_piece;
@@ -335,17 +334,17 @@ private:
 class EnPassantCapture : public Capture
 {
 public:
-	EnPassantCapture (Side side, File from, File to);
+	EnPassantCapture (Side, File from, File to);
 
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
-	virtual std::string GetMLAN () const;
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+	virtual MLAN serialize () const;
 
-	virtual Square GetCapturedSquare () const { return captured_square; }
+	virtual Square get_captured_square () const;
 
-	virtual std::string GetDescription () const;
+	virtual String get_description () const;
 
 protected:
-	virtual bool Equals (const Event& rhs) const;
+	virtual bool equals (const Event&) const;
 
 private:
 	Square captured_square;
@@ -354,16 +353,15 @@ private:
 class TwoSquarePawnMove : public Move
 {
 public:
-	TwoSquarePawnMove (Side side, File file);
+	TwoSquarePawnMove (Side, File);
 
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
-	virtual std::string GetMLAN () const;
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+	virtual MLAN serialize () const;
 
-	const Square& GetPassedSquare () const { return passed_square; }
-
+	const Square& get_passed_square () const { return passed_square; }
 
 protected:
-	virtual bool Equals (const Event& rhs) const;
+	virtual bool equals (const Event&) const;
 
 private:
 	Square passed_square;
@@ -372,7 +370,7 @@ private:
 class Castling : public Move
 {
 public:
-	enum Type
+	enum class Type : unsigned
 	{
 		NONE = 0,
 		KINGSIDE = 1,
@@ -380,20 +378,20 @@ public:
 		BOTH = KINGSIDE | QUEENSIDE
 	};
 
-	Castling (Side side, Type type);
+	Castling (Side, Type);
 
-	static EventPtr FromMLAN (const std::string& mlan, Side active_side);
-	virtual std::string GetMLAN () const;
+	static Event::Ptr deserialize (const MLAN&, Side active_side);
+	virtual MLAN serialize () const;
 
-	Type GetCastlingType () const { return type; }
-	Piece GetRookPiece () const { return rook_piece; }
-	Square GetRookFrom () const { return rook_from; }
-	Square GetRookTo () const { return rook_to; }
+	Type get_castling_type () const { return type; }
+	Piece get_rook_piece () const { return rook_piece; }
+	Square get_rook_from () const { return rook_from; }
+	Square get_rook_to () const { return rook_to; }
 
-	virtual std::string GetDescription () const;
+	virtual String get_description () const;
 
 protected:
-	virtual bool Equals (const Event& rhs) const;
+	virtual bool equals (const Event&) const;
 
 private:
 	Type type;
@@ -404,148 +402,16 @@ private:
 
 
 
-/**
- ** Position
- **/
+// Functions to be implemented appropriately by downstream user
 
-class Position
-{
-public:
-	Position ();
-	Position (const Position& position);
-
-	// Serialize is intentionally non-virtual to allow FEN access for Game.
-	Position (std::istream& fen);
-	void Serialize (std::ostream& fen) const;
-
-	bool IsEmpty (const Square& square) const;
-	Piece GetPieceAt (const Square& square) const;
-
-	Side GetActiveSide () const { return active_side; }
-	unsigned GetCastlingOptions (Side side) const;
-	Square GetEnPassantSquare () const { return en_passant_square; }
-
-	unsigned GetFiftyMoveClock () const { return fifty_move_clock; }
-	unsigned GetFullmoveNumber () const { return fullmove_number; }
-
-	bool IsUnderAttack (const Square& square, Side attacker) const;
-	bool IsInCheck (Side side = SIDE_NONE) const; // default: active side
-	bool IsDead () const;
-
-	// compares positions according to threefold repetition rule
-	bool operator == (const Position& rhs) const;
-
-	virtual void MakeMove (const MovePtr& move);
-
-protected:
-	char& operator [] (const Square& square);
-	const char& operator [] (const Square& square) const;
-
-	void EndGame ();
-
-private:
-	char board[N_RANKS][N_FILES];
-	Side active_side;
-	unsigned castling_options[N_SIDES];
-	Square en_passant_square;
-	unsigned fifty_move_clock;
-	unsigned fullmove_number;
-
-	static const char INITIAL_BOARD[N_RANKS * N_FILES + 1];
-	static const Side INITIAL_SIDE;
-	static const unsigned INITIAL_CASTLING[N_SIDES];
-};
+void debug_message (const String&);
+String translate (const String& msgid, Side = Side::NONE);
 
 
 
-/**
- ** Game
- **/
+} // namespace Chess
 
-typedef std::pair<Position, EventConstPtr> HistoryEntry;
-typedef std::vector<HistoryEntry> History;
+#include "Chess.inl"
 
-class Game : public Position
-{
-public:
-	Game ();
-	Game (const Game&) = delete;
-
-	Game (std::istream& record);
-	void Serialize (std::ostream& record);
-
-	static std::string GetLogbookHeading (unsigned page);
-	static std::string GetHalfmovePrefix (unsigned halfmove);
-
-	// status and analysis
-
-	enum Result
-	{
-		ONGOING,
-		WON,
-		DRAWN
-	};
-
-	Result GetResult () const { return result; }
-	Side GetVictor () const { return victor; }
-
-	const History& GetHistory () const { return history; }
-	EventConstPtr GetLastEvent () const;
-	bool IsThirdRepetition () const;
-
-	const Moves& GetPossibleMoves () const { return possible_moves; }
-	MovePtr FindPossibleMove (const Square& from, const Square& to) const;
-	MovePtr FindPossibleMove (const std::string& uci_code) const;
-
-	// movement and player actions
-
-	virtual void MakeMove (const MovePtr& move);
-	void RecordLoss (Loss::Type type, Side side);
-	void RecordDraw (Draw::Type type);
-
-private:
-	void RecordEvent (const EventConstPtr& event);
-	void EndGame (Result result, Side victor);
-	void DetectEndgames ();
-
-	Result result;
-	Side victor;
-	History history;
-
-	// possible moves
-
-	void UpdatePossibleMoves ();
-	void EnumerateKingMoves (const Piece& piece, const Square& from);
-	void EnumerateRookMoves (const Piece& piece, const Square& from);
-	void EnumerateBishopMoves (const Piece& piece, const Square& from);
-	void EnumerateKnightMoves (const Piece& piece, const Square& from);
-	void EnumeratePawnMoves (const Piece& piece, const Square& from);
-	bool ConfirmPossibleCapture (const Piece& piece, const Square& from,
-		const Square& to);
-	bool ConfirmPossibleMove (const MovePtr& move);
-
-	Moves possible_moves;
-};
-
-
-
-/**
- ** Utility functions
- **/
-
-// to be implemented appropriately by downstream user
-
-void DebugMessage (const std::string& message);
-std::string Translate (const std::string& msgid, Side side = SIDE_NONE);
-
-// implemented here
-
-std::string TranslateFormat (const std::string& format_msgid, ...);
-
-
-
-} // namespace chess
-
-#endif // !SCR_GENSCRIPTS
-#endif // CHESS_H
+#endif // CHESS_HH
 

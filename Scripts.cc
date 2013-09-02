@@ -26,9 +26,6 @@
 #include <ctime>
 #include <sstream>
 #include <unistd.h>
-#include <fcntl.h>
-#include <winsock2.h>
-#undef GetClassName // ugh, Windows...
 
 #include <lg/lg/ai.h>
 #include <lg/lg/propdefs.h>
@@ -120,6 +117,33 @@ PlayMotion (object ai, CustomMotion motion)
 	return result;
 }
 
+void
+FaceObject (object ai, object face)
+{
+	if (!ObjectExists (ai) || !ObjectExists (face)) return;
+
+	SService<IObjectSrv> pOS (g_pScriptManager);
+	cScrVec ai_pos, face_pos, old_facing, new_facing;
+	pOS->Position (ai_pos, ai);
+	pOS->Facing (old_facing, ai);
+	pOS->Position (face_pos, face);
+
+	float delta_x = ai_pos.x - face_pos.x,
+		delta_y = ai_pos.y - face_pos.y;
+	if (delta_x == 0.0)
+	{
+		if (delta_y == 0.0)
+			return;
+		else
+			new_facing.z = (delta_y > 0.0) ? 270.0 : 90.0;
+	}
+	else
+		new_facing.z = atan (delta_y / delta_x) * 90.0 / M_PI_2
+			+ ((delta_x > 0.0) ? 180.0 : 0.0);
+
+	pOS->Teleport (ai, ai_pos, new_facing, 0);
+}
+
 
 
 /* callbacks for chess module */
@@ -153,383 +177,6 @@ Translate (const std::string& _msgid, Side side)
 }
 
 } // namespace chess
-
-
-
-/* LinkIter */
-
-LinkIter::LinkIter (object source, object dest, const char* flavor)
-{
-	SService<ILinkSrv> pLS (g_pScriptManager);
-	SService<ILinkToolsSrv> pLTS (g_pScriptManager);
-	pLS->GetAll (links, flavor ? pLTS->LinkKindNamed (flavor) : 0,
-		source, dest);
-}
-
-LinkIter::~LinkIter () noexcept
-{}
-
-LinkIter::operator bool () const
-{
-	return links.AnyLinksLeft ();
-}
-
-LinkIter&
-LinkIter::operator++ ()
-{
-	links.NextLink ();
-	AdvanceToMatch ();
-	return *this;
-}
-
-LinkIter::operator link () const
-{
-	return links.AnyLinksLeft () ? links.Link () : link ();
-}
-
-object
-LinkIter::Source () const
-{
-	return links.AnyLinksLeft () ? links.Get ().source : object ();
-}
-
-object
-LinkIter::Destination () const
-{
-	return links.AnyLinksLeft () ? links.Get ().dest : object ();
-}
-
-const void*
-LinkIter::GetData () const
-{
-	return links.AnyLinksLeft () ? links.Data () : NULL;
-}
-
-void
-LinkIter::GetDataField (const char* field, cMultiParm& value) const
-{
-	if (!field)
-		throw std::invalid_argument ("invalid link data field");
-	SService<ILinkToolsSrv> pLTS (g_pScriptManager);
-	pLTS->LinkGetData (value, links.Link (), field);
-}
-
-void
-LinkIter::AdvanceToMatch ()
-{
-	while (links.AnyLinksLeft () && !Matches ())
-		links.NextLink ();
-}
-
-
-
-/* ScriptParamsIter */
-
-ScriptParamsIter::ScriptParamsIter (object source, const char* _data,
-                                    object destination)
-	: LinkIter (source, destination, "ScriptParams"),
-	  data (_data), only ()
-{
-	if (!source && !destination)
-		throw std::invalid_argument ("invalid source/destination");
-	if (_data && !strcmp (_data, "Self"))
-		only = source;
-	else if (_data && !strcmp (_data, "Player"))
-		only = StrToObject ("Player");
-	AdvanceToMatch ();
-}
-
-ScriptParamsIter::~ScriptParamsIter () noexcept
-{}
-
-ScriptParamsIter::operator bool () const
-{
-	return only ? true : LinkIter::operator bool ();
-}
-
-ScriptParamsIter&
-ScriptParamsIter::operator++ ()
-{
-	if (only)
-		only = 0;
-	else
-		LinkIter::operator++ ();
-	return *this;
-}
-
-ScriptParamsIter::operator object () const
-{
-	return only ? only : Destination ();
-}
-
-bool
-ScriptParamsIter::Matches ()
-{
-	if (!LinkIter::operator bool ())
-		return false;
-	else if (data)
-		return !strnicmp (data, (const char*) GetData (),
-			data.GetLength () + 1);
-	else
-		return true;
-}
-
-
-
-/* ChessEngine */
-
-ChessEngine::ChessEngine (const std::string& executable)
-	: ein_buf (NULL), ein (NULL), ein_h (NULL),
-	  eout_buf (NULL), eout (NULL),
-	  difficulty (DIFF_NORMAL), started (false), calculating (false)
-{
-	LaunchEngine (executable);
-
-	WriteCommand ("uci");
-	ReadReplies ("uciok");
-
-#ifdef DEBUG
-	WriteCommand ("debug on");
-#endif
-}
-
-ChessEngine::~ChessEngine ()
-{
-	try { WriteCommand ("stop"); } catch (...) {}
-	try { WriteCommand ("quit"); } catch (...) {}
-
-	try
-	{
-		if (eout) delete (eout);
-		if (eout_buf) delete (eout_buf);
-		if (ein) delete (ein);
-		if (ein_buf) delete (ein_buf);
-	}
-	catch (...) {}
-}
-
-void
-ChessEngine::SetDifficulty (Difficulty _difficulty)
-{
-	difficulty = _difficulty;
-}
-
-void
-ChessEngine::SetOpeningsBook (const std::string& book_file)
-{
-	WriteCommand ("setoption name OwnBook value true");
-
-	// Fruit family (not portable UCI)
-	WriteCommand ("setoption name BookFile value " + book_file);
-}
-
-void
-ChessEngine::ClearOpeningsBook ()
-{
-	WriteCommand ("setoption name OwnBook value false");
-}
-
-void
-ChessEngine::StartGame (const chess::Position* initial_position)
-{
-	started = true;
-	WaitUntilReady ();
-	WriteCommand ("ucinewgame");
-	if (initial_position)
-		UpdatePosition (*initial_position);
-	else
-		WriteCommand ("position startpos");
-}
-
-void
-ChessEngine::UpdatePosition (const chess::Position& position)
-{
-	if (started)
-	{
-		std::ostringstream fen;
-		fen << "position fen ";
-		position.Serialize (fen);
-		WriteCommand (fen.str ());
-	}
-	else
-		StartGame (&position);
-}
-
-unsigned
-ChessEngine::StartCalculation ()
-{
-	static const unsigned comp_time[] = { 2500, 5000, 7500 };
-	static const unsigned depth[] = { 1, 4, 9 };
-
-	std::stringstream go_command;
-	go_command << "go depth " << depth[difficulty]
-		<< " movetime " << comp_time[difficulty];
-
-	WaitUntilReady ();
-	WriteCommand (go_command.str ());
-
-	calculating = true;
-	return comp_time[difficulty];
-}
-
-void
-ChessEngine::StopCalculation ()
-{
-	WaitUntilReady ();
-	WriteCommand ("stop");
-	calculating = false;
-}
-
-std::string
-ChessEngine::TakeBestMove ()
-{
-	std::string result = best_move;
-	best_move.clear ();
-	return result;
-}
-
-void
-ChessEngine::WaitUntilReady ()
-{
-	WriteCommand ("isready");
-	ReadReplies ("readyok");
-}
-
-void
-ChessEngine::LaunchEngine (const std::string& executable)
-{
-#define lnchstep(x) if (!(x)) goto launch_problem
-
-	HANDLE engine_stdin_r, engine_stdin_w,
-		engine_stdout_r, engine_stdout_w;
-	int eout_fd, ein_fd;
-	FILE *eout_file, *ein_file;
-
-	SECURITY_ATTRIBUTES attrs;
-	attrs.nLength = sizeof (SECURITY_ATTRIBUTES);
-	attrs.bInheritHandle = true;
-	attrs.lpSecurityDescriptor = NULL;
-
-	lnchstep (CreatePipe (&engine_stdin_r, &engine_stdin_w, &attrs, 0));
-	lnchstep (SetHandleInformation (engine_stdin_w, HANDLE_FLAG_INHERIT, 0));
-	eout_fd = _open_osfhandle ((intptr_t) engine_stdin_w, _O_APPEND);
-	lnchstep (eout_fd != -1);
-	eout_file = _fdopen (eout_fd, "w");
-	lnchstep (eout_file != NULL);
-	eout_buf = new EngineBuf (eout_file, std::ios::out, 1);
-	eout = new std::ostream (eout_buf);
-
-	lnchstep (CreatePipe (&engine_stdout_r, &engine_stdout_w, &attrs, 0));
-	lnchstep (SetHandleInformation (engine_stdout_r, HANDLE_FLAG_INHERIT, 0));
-	ein_fd = _open_osfhandle ((intptr_t) engine_stdout_r, _O_RDONLY);
-	lnchstep (ein_fd != -1);
-	ein_file = _fdopen (ein_fd, "r");
-	lnchstep (ein_file != NULL);
-	ein_buf = new EngineBuf (ein_file, std::ios::in, 1);
-	ein = new std::istream (ein_buf);
-	ein_h = engine_stdout_r;
-
-	STARTUPINFO start_info;
-	ZeroMemory (&start_info, sizeof (STARTUPINFO));
-	start_info.cb = sizeof (STARTUPINFO);
-	start_info.hStdError = engine_stdout_w;
-	start_info.hStdOutput = engine_stdout_w;
-	start_info.hStdInput = engine_stdin_r;
-	start_info.dwFlags |= STARTF_USESTDHANDLES;
-
-	PROCESS_INFORMATION proc_info;
-	ZeroMemory (&proc_info, sizeof (PROCESS_INFORMATION));
-
-	lnchstep (CreateProcess (executable.data (), NULL, NULL, NULL, true,
-		CREATE_NO_WINDOW, NULL, NULL, &start_info, &proc_info));
-
-	CloseHandle (proc_info.hProcess);
-	CloseHandle (proc_info.hThread);
-
-#ifdef DEBUG
-	g_pfnMPrintf ("ChessEngine == %s\n", executable.data ());
-#endif
-
-	return;
-#undef lnchstep
-launch_problem:
-	throw std::runtime_error ("could not launch chess engine");
-}
-
-void
-ChessEngine::ReadReplies (const std::string& desired_reply)
-{
-	if (!ein) throw std::runtime_error ("no pipe from engine");
-	std::string last_reply;
-	unsigned wait_count = 0;
-
-	while (last_reply.compare (desired_reply) != 0)
-	{
-		while (!HasReply ())
-			if (wait_count++ < 250)
-				usleep (1000);
-			else // time out after 250ms
-				throw std::runtime_error
-					("engine took too long to reply");
-
-		std::string full_reply;
-		std::getline (*ein, full_reply);
-		if (full_reply.empty ())
-			continue;
-		if (full_reply.back () == '\r')
-			full_reply.erase (full_reply.size () - 1, 1);
-
-#ifdef DEBUG
-		if (full_reply.compare ("readyok") != 0)
-			g_pfnMPrintf ("ChessEngine -> %s\n", full_reply.data ());
-#endif
-
-		std::size_t pos = full_reply.find_first_of (" \t");
-		last_reply = full_reply.substr (0, pos);
-		full_reply.erase (0, pos + 1);
-		pos = full_reply.find_first_of (" \t");
-
-		if (last_reply.compare ("id") == 0)
-		{
-			std::string field = full_reply.substr (0, pos);
-			full_reply.erase (0, pos + 1);
-
-			if (field.compare ("name") == 0)
-				g_pfnMPrintf ("INFO: The chess engine is %s.\n",
-					full_reply.data ());
-			else if (field.compare ("author") == 0)
-				g_pfnMPrintf ("INFO: The chess engine was written by %s.\n",
-					full_reply.data ());
-		}
-
-		else if (last_reply.compare ("bestmove") == 0)
-			best_move = full_reply.substr (0, pos);
-			// ponder moves are ignored
-	}
-}
-
-bool
-ChessEngine::HasReply ()
-{
-	if (!ein) throw std::runtime_error ("no pipe from engine");
-
-	DWORD val;
-	if (!PeekNamedPipe (ein_h, NULL, 0, NULL, &val, NULL))
-		throw std::runtime_error ("could not check for engine reply");
-
-	return val > 0;
-}
-
-void
-ChessEngine::WriteCommand (const std::string& command)
-{
-	if (!eout) throw std::runtime_error ("no pipe to engine");
-	*eout << command << std::endl;
-#ifdef DEBUG
-	if (command.compare ("isready") != 0)
-		g_pfnMPrintf ("ChessEngine <- %s\n", command.data ());
-#endif
-}
 
 
 
