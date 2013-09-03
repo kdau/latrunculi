@@ -199,7 +199,8 @@ Engine::launch (const String& program_path)
 	::CloseHandle (proc_info.hThread);
 
 #ifdef DEBUG
-	Thief::mono << "Chess::Engine == " << program_path << std::endl;
+	Thief::mono << "Chess::Engine: Info: The engine has been loaded from "
+		<< program_path << std::endl;
 #endif
 
 	return;
@@ -248,11 +249,11 @@ Engine::read_replies (const String& desired_reply)
 			full_reply.erase (0u, pos + 1u);
 
 			if (field == "name")
-				Thief::mono << "INFO: The chess engine is "
-					<< full_reply << "." << std::endl;
+				Thief::mono << "Chess::Engine: Info: The engine "
+					"is " << full_reply << "." << std::endl;
 			else if (field == "author")
-				Thief::mono << "INFO: The chess engine was "
-					"written by " << full_reply << "."
+				Thief::mono << "Chess::Engine: Info: The engine "
+					"was written by " << full_reply << "."
 					<< std::endl;
 		}
 

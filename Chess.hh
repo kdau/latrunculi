@@ -21,9 +21,7 @@
 #ifndef CHESS_HH
 #define CHESS_HH
 
-#include <memory>
-#include <string>
-#include <vector>
+#include <Thief/Thief.hh>
 
 namespace Chess {
 
@@ -402,9 +400,7 @@ private:
 
 
 
-// Functions to be implemented appropriately by downstream user
-
-void debug_message (const String&);
+// To be implemented appropriately by downstream user.
 String translate (const String& msgid, Side = Side::NONE);
 
 

@@ -25,6 +25,13 @@
 #ifndef CHESS_INL
 #define CHESS_INL
 
+namespace Thief {
+
+template<> bool Parameter<Chess::Side>::decode (const String& raw) const;
+template<> String Parameter<Chess::Side>::encode () const; // undefined
+
+} // namespace Thief
+
 namespace Chess {
 
 

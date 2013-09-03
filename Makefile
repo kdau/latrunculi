@@ -28,11 +28,13 @@ SCRIPT_HEADERS = \
 	Chess.hh \
 	ChessGame.hh \
 	ChessEngine.hh \
+	NGCPiece.hh \
 	Scripts.hh
 
 include $(THIEFLIBDIR)/module.mk
 
 $(bindir2)/ChessGame.hh: Chess.hh
 $(bindir2)/ChessEngine.hh: Chess.hh ChessGame.hh
+$(bindir2)/NGCPiece.o: Chess.hh
 $(bindir2)/Scripts.o: Chess.hh ChessGame.hh ChessEngine.hh
 

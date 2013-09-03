@@ -21,10 +21,9 @@
 #ifndef CHESSENGINE_HH
 #define CHESSENGINE_HH
 
-#include <Thief/Thief.hh>
+#include "ChessGame.hh"
 #include <iostream>
 #include <ext/stdio_filebuf.h>
-#include "ChessGame.hh"
 
 namespace Chess {
 

@@ -21,7 +21,32 @@
 #include "Chess.hh"
 #include <cstdarg> //FIXME Remove once translate_format is replaced.
 #include <cstdio> //FIXME Remove once translate_format is replaced.
-#include <cstdlib>
+
+
+
+namespace Thief {
+
+THIEF_ENUM_CODING (Chess::Side::Value, CODE, CODE,
+	THIEF_ENUM_VALUE (NONE, "-", "none"),
+	THIEF_ENUM_VALUE (WHITE, "w", "white"),
+	THIEF_ENUM_VALUE (BLACK, "b", "black"),
+)
+
+template<>
+bool
+Parameter<Chess::Side>::decode (const String& raw) const
+{
+	if (raw.empty ())
+		return false;
+
+	value.value = Chess::Side::Value
+		(EnumCoding::get<Chess::Side::Value> ().decode (raw));
+	return true;
+}
+
+} // namespace Thief
+
+
 
 namespace Chess {
 

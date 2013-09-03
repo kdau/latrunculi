@@ -37,20 +37,6 @@ int GetChessSet (chess::Side side);
 typedef unsigned long COLORREF;
 COLORREF GetChessSetColor (int set);
 
-enum CustomMotion
-{
-	MOTION_NONE = -1,
-	MOTION_BOW_TO_KING,	// rook - bipeds and pseudo-bipeds only
-	MOTION_PLAY_HORN,	// herald - bipeds only
-	MOTION_THINKING,	// herald - bipeds only
-	MOTION_THOUGHT,		// herald - bipeds only
-	MOTION_FACE_ENEMY,	// all - all types
-	N_MOTIONS
-};
-bool PlayMotion (object ai, CustomMotion motion);
-
-void FaceObject (object ai, object face);
-
 #endif // !SCR_GENSCRIPTS
 
 
@@ -334,84 +320,6 @@ private:
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessPiece
- * Inherits: BaseAIScript, Fade
- *
- * Coordinates the activity of an AI chess piece with the ChessGame ("TheGame").
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessPiece : public virtual cBaseAIScript, public cScr_Fade
-{
-public:
-	cScr_ChessPiece (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnObjActResult (sAIObjActResultMsg* pMsg,
-		cMultiParm& mpReply);
-	virtual long OnSlain (sSlayMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnAIModeChange (sAIModeChangeMsg* pMsg,
-		cMultiParm& mpReply);
-
-private:
-	void Reposition (bool direct, object square = object ());
-	link CreateAwareness (object target, uint time);
-
-	void GoToSquare (object square);
-	void ArriveAtSquare (uint time);
-	script_int going_to_square; // object
-
-	void AttackPiece (object piece, uint time);
-	void MaintainAttack (uint time);
-	void FinishAttack ();
-	script_int attacking_piece; // object
-
-	void BecomeVictim (object attacker, uint time);
-	void BeAttacked (object attacker, uint time);
-	void Die ();
-	void BeginBurial ();
-	void FinishBurial ();
-	script_int being_attacked_by; // object
-
-	void BePromoted (object promotion);
-	void RevealPromotion ();
-	void FinishPromotion ();
-	script_int being_promoted_to; // object
-
-	// for heralds only
-	void HeraldConcept (const std::string& concept);
-	object GetHeraldrySource ();
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessPiece","Fade",cScr_ChessPiece)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessCorpse
- * Inherits: ChessPiece
- *
- * Buries a chess piece's corpse.
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessCorpse : public virtual cScr_ChessPiece
-{
-public:
-	cScr_ChessCorpse (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnCreate (sScrMsg* pMsg, cMultiParm& mpReply);
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessCorpse","ChessPiece",cScr_ChessCorpse)
 #endif // SCR_GENSCRIPTS
 
 
