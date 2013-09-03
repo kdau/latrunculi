@@ -38,7 +38,7 @@ namespace Duration
 
 NGCPiece::NGCPiece (const String& _name, const Object& _host)
 	: Script (_name, _host),
-	  PARAMETER_ (side, "chess_side", Chess::Side::NONE),
+	  PARAMETER_ (side, "chess_side", Side::NONE),
 	  PARAMETER_ (set, "chess_set", 0),
 	  PERSISTENT (game, Object::NONE),
 	  PERSISTENT_ (reposition_start), PERSISTENT_ (reposition_end),
@@ -418,7 +418,7 @@ Message::Result
 NGCPiece::start_burial (TimerMessage&)
 {
 	if (!side->is_valid ())
-		side = Chess::Side::Value (QuestVar ("chess_corpse_side").get ());
+		side = Side::Value (QuestVar ("chess_corpse_side").get ());
 
 	// Create a smoke puff at the site of death.
 	Object puff_type = Object ("ChessBurialPuff"),
@@ -427,7 +427,7 @@ NGCPiece::start_burial (TimerMessage&)
 
 	// Create a smoke puff at the gravesite, if any.
 	String grave_name = "ChessGrave";
-	grave_name += Chess::Side (side).get_code ();
+	grave_name += side->get_code ();
 	Object grave = Object (grave_name);
 	if (grave != Object::NONE)
 	{

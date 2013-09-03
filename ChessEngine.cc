@@ -127,6 +127,13 @@ Engine::stop_calculation ()
 	calculating = false;
 }
 
+bool
+Engine::has_resigned () const
+{
+	// for Fruit family (not portable UCI)
+	return best_move == "a1a1";
+}
+
 String
 Engine::take_best_move ()
 {

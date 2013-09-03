@@ -27,8 +27,6 @@
 
 namespace Chess {
 
-
-
 class Engine
 {
 public:
@@ -48,6 +46,7 @@ public:
 	void stop_calculation ();
 
 	const String& peek_best_move () const { return best_move; }
+	bool has_resigned () const;
 	String take_best_move ();
 
 	void wait_until_ready ();
@@ -68,8 +67,6 @@ private:
 	String best_move;
 	bool started, calculating;
 };
-
-
 
 } // namespace Chess
 

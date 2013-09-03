@@ -31,11 +31,16 @@
 #include "scriptvars.h"
 #include "chess.h"
 
-chess::Side GetSide (object target);
-int GetChessSet (chess::Side side);
+enum class SquareState
+{
+	INACTIVE,
+	FRIENDLY_INERT,
+	CAN_MOVE_FROM,
+	CAN_MOVE_TO
+};
 
-typedef unsigned long COLORREF;
-COLORREF GetChessSetColor (int set);
+int get_chess_set (Side side);
+Color get_chess_set_color (int set_number);
 
 #endif // !SCR_GENSCRIPTS
 
@@ -167,87 +172,6 @@ protected:
 };
 #else // SCR_GENSCRIPTS
 GEN_FACTORY("ChessScenario","BaseScript",cScr_ChessScenario)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessGame
- * Inherits: BaseScript
- *
- * Coordinates the chess gameplay, managing the game model, engine connection,
- * player controls, and effects for moves/captures, key events, etc.
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessGame : public virtual cBaseScript
-{
-public:
-	cScr_ChessGame (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnEndScript (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
-
-private:
-	object GetSquare (const chess::Square& square, bool proxy = false);
-	chess::Square GetSquare (object square);
-
-	object GetPieceAt (const chess::Square& square, bool proxy = false);
-	object GetPieceAt (object square);
-
-	void ArrangeBoard (object origin, bool proxy);
-	object CreatePiece (object square, const chess::Piece& piece,
-		bool start_positioned, bool proxy = false);
-
-	void UpdateRecord ();
-	void UpdateSim ();
-	void UpdateInterface ();
-
-	void SelectFrom (object square);
-	void SelectTo (object square);
-	void ClearSelection ();
-
-	void BeginComputing ();
-	void FinishComputing ();
-
-	void BeginMove (const chess::MovePtr& move, bool from_engine);
-	void FinishMove ();
-	void PlaceProxy (object proxy, object square);
-
-	void BeginEndgame ();
-	void FinishEndgame ();
-
-	void AnnounceEvent (const chess::EventConstPtr& event);
-	void HeraldConcept (chess::Side side, const std::string& concept,
-		ulong delay = 0);
-	void AnnounceCheck ();
-
-	void ShowLogbook (const std::string& art);
-
-	void EngineFailure (const std::string& where, const std::string& what);
-	void ScriptFailure (const std::string& where, const std::string& what);
-
-	chess::Game* game;
-	ChessEngine* engine;
-
-	script_str record;
-	script_int side; // chess::Side
-
-	enum State
-	{
-		NONE = 0,
-		INTERACTIVE,
-		COMPUTING,
-		MOVING
-	};
-	script_int state; // State
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessGame","BaseScript",cScr_ChessGame)
 #endif // SCR_GENSCRIPTS
 
 

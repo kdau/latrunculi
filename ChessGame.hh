@@ -110,7 +110,7 @@ public:
 	Event::ConstPtr get_last_event () const;
 	bool is_third_repetition () const;
 
-	const Moves& get_possibe_moves () const { return possible_moves; }
+	const Moves& get_possible_moves () const { return possible_moves; }
 	Move::Ptr find_possible_move (const Square& from, const Square& to)
 		const;
 	Move::Ptr find_possible_move (const String& uci_code) const;
@@ -143,6 +143,29 @@ private:
 	bool confirm_possible_move (const Move::Ptr&);
 
 	Moves possible_moves;
+};
+
+
+
+// Check: unofficial (not in history) event type for downstream use
+
+class Check : public Event
+{
+public:
+	explicit Check (Side);
+
+	virtual MLAN serialize () const;
+
+	virtual Side get_side () const;
+
+	virtual String get_description () const;
+	virtual String get_concept () const;
+
+protected:
+	virtual bool equals (const Event&) const;
+
+private:
+	Side side;
 };
 
 

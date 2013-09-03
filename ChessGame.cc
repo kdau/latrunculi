@@ -892,5 +892,48 @@ Game::confirm_possible_move (const Move::Ptr& move)
 
 
 
+// Check
+
+Check::Check (Side _side)
+	: side (_side)
+{
+	if (!side.is_valid ())
+		invalidate ();
+}
+
+Side
+Check::get_side () const
+{
+	return side;
+}
+
+MLAN
+Check::serialize () const
+{
+	return String ();
+}
+
+bool
+Check::equals (const Event& _rhs) const
+{
+	auto& rhs = dynamic_cast<const Check&> (_rhs);
+	return side == rhs.side;
+}
+
+String
+Check::get_description () const
+{
+	return translate_format ("in_check",
+		side.get_name (Case::NOMINATIVE).data ());
+}
+
+String
+Check::get_concept () const
+{
+	return "check";
+}
+
+
+
 } // namespace Chess
 

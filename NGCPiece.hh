@@ -25,6 +25,7 @@
 using namespace Thief;
 
 #include "Chess.hh"
+using namespace Chess;
 
 class NGCPiece : public Script //FIXME inherit from Fade or replace functionality
 {
@@ -34,7 +35,7 @@ public:
 private:
 	void initialize ();
 
-	Parameter<Chess::Side> side;
+	Parameter<Side> side;
 	Parameter<int> set;
 
 	void tell_game (const char* message);
