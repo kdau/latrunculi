@@ -18,16 +18,16 @@
  *
  *****************************************************************************/
 
+#include "NGC.hh"
 #include "NGCGame.hh"
 #include "NGCPiece.hh"
-#include "Scripts.hh"
 
 #include "version.rc"
 #include <Thief/module.hh>
 
 THIEF_MODULE_BEGIN (MODULE_NAME)
+	//FIXME ...
 	THIEF_SCRIPT ("NGCGame", "Script", NGCGame)
 	THIEF_SCRIPT ("NGCPiece", "Script", NGCPiece)
-	//FIXME ...
 THIEF_MODULE_END
 
