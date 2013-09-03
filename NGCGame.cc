@@ -55,6 +55,7 @@ NGCGame::NGCGame (const String& _name, const Object& _host)
 	listen_message ("TurnOn", &NGCGame::show_logbook);
 
 	listen_timer ("EndMission", &NGCGame::end_mission);
+	listen_timer ("EarlyEngineFailure", &NGCGame::early_engine_failure);
 }
 
 NGCGame::~NGCGame ()
@@ -146,7 +147,8 @@ NGCGame::initialize ()
 	catch (std::exception& e)
 	{
 		engine = nullptr;
-		start_timer ("EngineFailure", 10ul, false, String (e.what ())); //FIXME pre-Sim clean?
+		start_timer ("EarlyEngineFailure", 10ul, false,
+			String (e.what ())); //FIXME pre-Sim clean?
 	}
 
 	if (state == State::COMPUTING) // need to prompt the engine
@@ -187,25 +189,6 @@ NGCGame::start_game (Message&)
 
 	return Message::CONTINUE;
 }
-
-/*FIXME BEGIN PORTING HERE
-
-long
-cScr_ChessGame::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
-{
-	else if (!strcmp (pMsg->name, "EngineFailure"))
-	{
-		// this timer is only set from OnBeginScript
-		std::string what;
-		if (pMsg->data.type == kMT_String)
-			what = (const char*) pMsg->data;
-		EngineFailure ("BeginScript", what);
-	}
-
-	return cBaseScript::OnTimer (pMsg, mpReply);
-}
-
-FIXME END PORTING HERE */
 
 void
 NGCGame::arrange_board (const Object& origin, bool proxy)
@@ -990,5 +973,14 @@ NGCGame::end_mission (TimerMessage&)
 {
 	Mission::end ();
 	return Message::HALT;
+}
+
+Message::Result
+NGCGame::early_engine_failure (TimerMessage& message)
+{
+	// This timer is only set from the initialize method.
+	engine_failure ("initialize",
+		message.get_data (Message::DATA1, String ()));
+	return Message::CONTINUE;
 }
 

@@ -34,12 +34,6 @@ public:
 	virtual ~NGCGame ();
 
 private:
-/*FIXME PORT
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
-*/
-
 	Object get_square (const Square&, bool proxy = false);
 	Square get_square (const Object& square);
 
@@ -100,6 +94,7 @@ private:
 	void engine_failure (const String& where, const String& what);
 	void script_failure (const String& where, const String& what);
 	Message::Result end_mission (TimerMessage&);
+	Message::Result early_engine_failure (TimerMessage&);
 
 	Game* game;
 	Chess::Engine* engine;
