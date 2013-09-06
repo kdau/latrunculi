@@ -32,15 +32,16 @@ namespace Duration
 }
 
 
-//FIXME Removed support for TellIntro message, which was supporting subtitles and convo-done notification in the briefing conversation. Replace those functions.
-
-
 
 NGCPiece::NGCPiece (const String& _name, const Object& _host)
 	: Script (_name, _host),
 	  PARAMETER_ (side, "chess_side", Side::NONE),
 	  PARAMETER_ (set, "chess_set", 0),
 	  PERSISTENT (game, Object::NONE),
+	  PARAMETER (max_opacity, 1.0f),
+	  PERSISTENT (fade_state, Fade::NONE),
+	  fade_trans (*this, &NGCPiece::fade_step, "Fade", 50ul, 1000ul,
+		Curve::LINEAR, "fade_time", "fade_curve"),
 	  PERSISTENT_ (reposition_start), PERSISTENT_ (reposition_end),
 	  reposition_trans (*this, &NGCPiece::reposition_step, "Reposition",
 	  	10ul, 500ul, Curve::LOG_10, "slide_time", "slide_curve"),
@@ -52,8 +53,10 @@ NGCPiece::NGCPiece (const String& _name, const Object& _host)
 {
 	listen_message ("Select", &NGCPiece::select);
 	listen_message ("Deselect", &NGCPiece::deselect);
+	listen_message ("Reveal", &NGCPiece::reveal);
 
 	listen_message ("Reposition", &NGCPiece::reposition);
+	listen_timer ("Reposition", &NGCPiece::reposition);
 	listen_message ("GoToSquare", &NGCPiece::go_to_square);
 	listen_message ("ObjActResult", &NGCPiece::arrive_at_square);
 	listen_timer ("BowToKing", &NGCPiece::bow_to_king);
@@ -65,7 +68,6 @@ NGCPiece::NGCPiece (const String& _name, const Object& _host)
 
 	listen_timer ("ForceDeath", &NGCPiece::force_death);
 	listen_message ("AIModeChange", &NGCPiece::check_ai_mode);
-	listen_message ("PropertyChange", &NGCPiece::check_death_stage);
 	listen_message ("Slain", &NGCPiece::die);
 
 	listen_timer ("StartBurial", &NGCPiece::start_burial);
@@ -77,6 +79,8 @@ NGCPiece::NGCPiece (const String& _name, const Object& _host)
 	listen_timer ("FinishPromotion", &NGCPiece::finish_promotion);
 
 	listen_message ("HeraldConcept", &NGCPiece::herald_concept);
+	listen_message ("PropertyChange", &NGCPiece::subtitle_speech);
+	listen_timer ("FinishSubtitle", &NGCPiece::finish_subtitle);
 
 	listen_message ("StartThinking", &NGCPiece::start_thinking);
 	listen_message ("FinishThinking", &NGCPiece::finish_thinking);
@@ -86,7 +90,7 @@ void
 NGCPiece::initialize ()
 {
 	game = Object ("TheGame");
-	ObjectProperty::subscribe ("DeathStage", host ());
+	ObjectProperty::subscribe ("Speech", host ());
 }
 
 
@@ -106,7 +110,7 @@ NGCPiece::select (Message&)
 {
 	host ().add_metaprop (Object ("M-SelectedPiece"));
 	host_as<DynamicLight> ().brightness.instantiate ();
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -114,7 +118,45 @@ NGCPiece::deselect (Message&)
 {
 	host ().remove_metaprop (Object ("M-SelectedPiece"));
 	host_as<DynamicLight> ().brightness.remove ();
-	return Message::CONTINUE;
+	return Message::HALT;
+}
+
+Message::Result
+NGCPiece::reveal (Message&)
+{
+	fade_state = Fade::IN;
+	fade_trans.start ();
+	return Message::HALT;
+}
+
+bool
+NGCPiece::fade_step ()
+{
+	float new_opacity;
+	switch (fade_state)
+	{
+	case Fade::IN:
+		new_opacity = fade_trans.interpolate (0.0f, float (max_opacity));
+		break;
+	case Fade::OUT:
+		new_opacity = fade_trans.interpolate (float (max_opacity), 0.0f);
+		break;
+	default:
+		return false;
+	}
+
+	host_as<Rendered> ().opacity = new_opacity;
+
+	for (auto& link : Link::get_all ("Contains", host ()))
+		Rendered (link.get_dest ()).opacity = new_opacity;
+	for (auto& link : Link::get_all ("~DetailAttachement", host ()))
+		Rendered (link.get_dest ()).opacity = new_opacity;
+	for (auto& link : Link::get_all ("~ParticleAttachement", host ()))
+		Rendered (link.get_dest ()).opacity = new_opacity;
+
+	if (fade_trans.is_finished ())
+		fade_state = Fade::NONE;
+	return true;
 }
 
 
@@ -124,11 +166,10 @@ NGCPiece::deselect (Message&)
 Message::Result
 NGCPiece::reposition (Message& message)
 {
-	auto square = message.get_data (Message::DATA1, Object ());
+	auto square = message.get_data (Message::DATA1,
+		Link::get_one ("~Population", host ()).get_dest ());
 	auto direct = message.get_data (Message::DATA2, false);
 
-	if (square == Object::NONE)
-		square = Link::get_one ("~Population", host ()).get_dest ();
 	if (square == Object::NONE)
 		return Message::HALT;
 
@@ -142,7 +183,10 @@ NGCPiece::reposition (Message& message)
 
 	Vector distance = target - origin;
 	if (direct || distance.magnitude () < 0.25f)
+	{
 		host ().set_location (target);
+		host_as<AI> ().send_signal ("FaceEnemy");
+	}
 	else
 	{
 		reposition_start = origin;
@@ -150,7 +194,7 @@ NGCPiece::reposition (Message& message)
 		reposition_trans.start ();
 	}
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 bool
@@ -159,7 +203,7 @@ NGCPiece::reposition_step ()
 	host ().set_location (reposition_trans.interpolate
 		(reposition_start, reposition_end));
 	if (reposition_trans.is_finished ())
-		host_as<AI> ().send_signal ("FaceEnemy"); //FIXME Okay to only do it once?
+		host_as<AI> ().send_signal ("FaceEnemy");
 	return true;
 }
 
@@ -175,7 +219,7 @@ NGCPiece::go_to_square (Message& message)
 	host_as<AI> ().go_to_location (target_square,
 		castling_king ? AI::Speed::FAST : AI::Speed::NORMAL,
 		AI::ActionPriority::HIGH, String ("ArriveAtSquare"));
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -227,7 +271,7 @@ NGCPiece::arrive_at_square (AIActionResultMessage& message)
 			tell_game ("FinishMove");
 	}
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -235,7 +279,7 @@ NGCPiece::bow_to_king (TimerMessage&)
 {
 	host_as<AI> ().play_motion ("humsalute3"); // (pseudo-)bipeds only
 	start_timer ("Reposition", 3000ul, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 
@@ -261,7 +305,7 @@ NGCPiece::start_attack (Message& message)
 	start_timer ("MaintainAttack", 1ul, false);
 
 	// If needed, the victim's death timer will lead to a finish_attack call.
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -271,7 +315,7 @@ NGCPiece::maintain_attack (TimerMessage& message)
 		return Message::HALT;
 
 	if (!victim->exists () || victim->mode == AI::Mode::DEAD ||
-	    victim->hit_points <= 0)
+	    victim->death_stage == 12 || victim->hit_points <= 0)
 	{
 		finish_attack ();
 		return Message::HALT;
@@ -291,7 +335,7 @@ NGCPiece::maintain_attack (TimerMessage& message)
 
 	host_as<AI> ().mode = AI::Mode::COMBAT;
 	start_timer ("MaintainAttack", 125ul, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 void
@@ -339,7 +383,7 @@ NGCPiece::become_victim (Message& message)
 	host_as<AI> ().face_object (message.get_from ());
 
 	// Don't set attacker variable until it's official.
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -348,7 +392,7 @@ NGCPiece::be_attacked (Message& message)
 	attacker = message.get_from ();
 	create_awareness (attacker, message.get_time ());
 	start_timer ("ForceDeath", Duration::ATTACK, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 AIAwarenessLink
@@ -379,7 +423,7 @@ Message::Result
 NGCPiece::force_death (TimerMessage&)
 {
 	host_as<Damageable> ().slay (attacker);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -387,16 +431,7 @@ NGCPiece::check_ai_mode (AIModeChangeMessage& message)
 {
         if (message.get_new_mode () == AI::Mode::DEAD)
 		die (message);
-	return Message::CONTINUE;
-}
-
-Message::Result
-NGCPiece::check_death_stage (PropertyChangeMessage& message)
-{
-	if (message.get_property () == Property ("DeathStage") &&
-	    host_as<Damageable> ().death_stage == 12) // being slain
-		die (message);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -405,13 +440,16 @@ NGCPiece::die (Message&)
 	if (attacker == Object::NONE) return Message::HALT;
 	attacker = Object::NONE;
 
+	// Stop any current subtitle, just in case.
+	subtitle.reset ();
+
 	// Ensure that any corpses will bury themselves appropriately.
 	QuestVar ("chess_corpse_side").set (side->value);
 
 	// Set timer to do it on ourself, if we are not replaced.
 	start_timer ("StartBurial", Duration::DEATH, false);
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -436,9 +474,10 @@ NGCPiece::start_burial (TimerMessage&)
 		puff.set_location (grave.get_location ());
 	}
 
-	GenericMessage ("FadeOut").send (host (), host ()); //FIXME
+	fade_state = Fade::OUT;
+	fade_trans.start ();
 	start_timer ("FinishBurial", Duration::BURIAL, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -450,17 +489,17 @@ NGCPiece::finish_burial (TimerMessage&)
 	{
 		Vector location = grave.get_location ();
 		host ().set_location (location);
-		GenericMessage ("FadeIn").send (host (), host ()); //FIXME
+
+		fade_state = Fade::IN;
+		fade_trans.start ();
 
 		// Displace the grave marker (for rows instead of piles).
-		location.x += Parameter<float> (grave, "XIncrement", {0.0f});
-		location.y += Parameter<float> (grave, "YIncrement", {0.0f});
-		location.z += Parameter<float> (grave, "ZIncrement", {0.0f});
+		location += Parameter<Vector> (grave, "grave_offset");
 		grave.set_location (location);
 	}
 	else
 		host ().destroy ();
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -468,7 +507,7 @@ NGCPiece::bury_corpse (Message&)
 {
 	if (is_corpse)
 		start_timer ("StartBurial", Duration::CORPSING, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 
@@ -500,7 +539,7 @@ NGCPiece::start_promotion (Message& message)
 	}
 
 	start_timer ("RevealPromotion", Duration::PROMOTION / 2, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -508,15 +547,16 @@ NGCPiece::reveal_promotion (TimerMessage&)
 {
 	host_as<Physical> ().collides_with_ai = false;
 
-	GenericMessage ("FadeOut").send (host (), host ()); //FIXME
+	fade_state = Fade::OUT;
+	fade_trans.start ();
 
 	GenericMessage::with_data ("Reposition", Object::SELF, true).send
 		(host (), promotion);
 
-	GenericMessage ("FadeIn").send (host (), promotion); //FIXME
+	GenericMessage ("Reveal").send (host (), promotion);
 
 	start_timer ("FinishPromotion", Duration::PROMOTION / 2, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -553,7 +593,7 @@ NGCPiece::herald_concept (Message& message)
 		SoundSchema::Tagged::AT_OBJECT_LOCATION,
 		get_heraldry_source (), Object::NONE, host ());
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Object
@@ -588,6 +628,54 @@ NGCPiece::get_heraldry_source () //TODO Replace this with proper attenuation fac
 	return source;
 }
 
+Message::Result
+NGCPiece::subtitle_speech (PropertyChangeMessage& message)
+{
+	AI ai = host_as<AI> ();
+
+	// Confirm that the relevant property has changed.
+	if (message.get_object () != ai ||
+	    message.get_property () != Property ("Speech"))
+		return Message::CONTINUE;
+
+	// Confirm that the speech schema is valid.
+	SoundSchema schema = ai.last_speech_schema;
+	if (!schema.exists ()) return Message::HALT;
+
+	// If this is the end of a speech schema, finish the subtitle instead.
+	if (!ai.is_speaking)
+	{
+		subtitle.reset ();
+		return Message::HALT;
+	}
+
+	// Get subtitle text.
+	String schema_name = schema.get_name ();
+	String text = Chess::translate (schema_name);
+	if (text.empty ()) return Message::HALT;
+
+	// Get or calculate the schema duration.
+	Time duration = ScriptHost (schema).script_timing.exists ()
+		? ScriptHost (schema).script_timing
+		: Mission::calc_text_duration (text, 700ul);
+
+	// Start the subtitle and schedule its end.
+	subtitle.reset (new HUDMessage (ai, text, ChessSet (set).get_color ()));
+	subtitle->identifier = schema_name;
+	start_timer ("FinishSubtitle", duration, false, schema_name);
+
+	return Message::HALT;
+}
+
+Message::Result
+NGCPiece::finish_subtitle (TimerMessage& message)
+{
+	if (subtitle && subtitle->identifier ==
+	    message.get_data (Message::DATA1, String ()))
+		subtitle.reset ();
+	return Message::HALT;
+}
+
 
 
 // "Player"s
@@ -596,13 +684,13 @@ Message::Result
 NGCPiece::start_thinking (Message&)
 {
 	host_as<AI> ().play_motion ("bh112003"); // bipeds only
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
 NGCPiece::finish_thinking (Message&)
 {
 	host_as<AI> ().play_motion ("bh112550"); // bipeds only
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 

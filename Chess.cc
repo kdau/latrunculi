@@ -26,6 +26,24 @@
 
 namespace Thief {
 
+LGMulti<Chess::Piece>::LGMulti (const Chess::Piece& value)
+	: LGMulti<int> (value.get_code ())
+{}
+
+LGMulti<Chess::Piece>::operator Chess::Piece () const
+{
+	return Chess::Piece (operator int ());
+}
+
+LGMulti<Chess::Side>::LGMulti (const Chess::Side& value)
+	: LGMulti<int> (value.value)
+{}
+
+LGMulti<Chess::Side>::operator Chess::Side () const
+{
+	return Chess::Side (operator int ());
+}
+
 THIEF_ENUM_CODING (Chess::Side::Value, CODE, CODE,
 	THIEF_ENUM_VALUE (NONE, "-", "none"),
 	THIEF_ENUM_VALUE (WHITE, "w", "white"),
@@ -42,6 +60,13 @@ Parameter<Chess::Side>::decode (const String& raw) const
 	value.value = Chess::Side::Value
 		(EnumCoding::get<Chess::Side::Value> ().decode (raw));
 	return true;
+}
+
+template<>
+String
+Parameter<Chess::Side>::encode () const
+{
+	return EnumCoding::get<Chess::Side::Value> ().encode (value.value);
 }
 
 } // namespace Thief
@@ -69,9 +94,6 @@ translate_format (const String& format_msgid, ...)
 
 const Square
 Square::BEGIN = { File::A, Rank::R1 };
-
-const size_t
-Square::COUNT = size_t (Rank::_COUNT) * size_t (File::_COUNT);
 
 Square::Square (const String& code)
 {
@@ -224,7 +246,7 @@ Piece::set_code (char code)
 	type = Type::NONE;
 
 	for (Side _side : { Side::WHITE, Side::BLACK })
-		for (int _type = 0; _type < int (Type::_COUNT); ++_type)
+		for (size_t _type = 0; _type < N_TYPES; ++_type)
 			if (code == get_codes (_side) [_type])
 			{
 				side = Side (_side);
@@ -827,6 +849,49 @@ Castling::equals (const Event& _rhs) const
 		rook_piece == rhs.rook_piece &&
 		rook_from == rhs.rook_from &&
 		rook_to == rhs.rook_to;
+}
+
+
+
+// Check
+
+Check::Check (Side _side)
+	: side (_side)
+{
+	if (!side.is_valid ())
+		invalidate ();
+}
+
+Side
+Check::get_side () const
+{
+	return side;
+}
+
+MLAN
+Check::serialize () const
+{
+	return String ();
+}
+
+bool
+Check::equals (const Event& _rhs) const
+{
+	auto& rhs = dynamic_cast<const Check&> (_rhs);
+	return side == rhs.side;
+}
+
+String
+Check::get_description () const
+{
+	return translate_format ("in_check",
+		side.get_name (Case::NOMINATIVE).data ());
+}
+
+String
+Check::get_concept () const
+{
+	return "check";
 }
 
 

@@ -1,15 +1,11 @@
 /******************************************************************************
- *  custom.cpp
+ *  NGC.cc
  *
- *  Custom scripts for A Nice Game of Chess
  *  Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
- *
- *  Adapted in part from Public Scripts
- *  Copyright (C) 2005-2011 Tom N Harris <telliamed@whoopdedo.org>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
+ *  the Free Software Foundation; either version 3 of the License, or
  *  (at your option) any later version.
  *
  *  This program is distributed in the hope that it will be useful,
@@ -22,673 +18,784 @@
  *
  *****************************************************************************/
 
-#include <cmath>
-#include <ctime>
-#include <sstream>
-#include <unistd.h>
-
-#include <lg/lg/ai.h>
-#include <lg/lg/propdefs.h>
-#include <ScriptLib.h>
-#include "ScriptModule.h"
-#include "utils.h"
-
-#include "custom.h"
+#include "NGC.hh"
 
 
 
-/* misc. utilities */
-
-#define fclamp(val, min, max) (fmin (fmax ((val), (min)), (max)))
-
-int
-get_chess_set (Side side)
-{
-	return side.is_valid ()
-		? QuestVar (String ("chess_set_") + side.get_code ()).get ()
-		: 0;
-}
-
-Color
-get_chess_set_color (int set_number)
-{
-	static const Color DEFAULT_COLOR (255, 255, 255);
-	if (set_number < 1) return DEFAULT_COLOR;
-
-	std::ostringstream set_name;
-	set_name << "M-ChessSet" << set_number;
-
-	return Parameter<Color> (Object (set_name.str ()), "chess_color",
-		DEFAULT_COLOR);
-}
-
-
-
-/* callbacks for chess module */
+// Callback for Chess module
 
 namespace Chess {
 
 String
 translate (const String& _msgid, Side side)
 {
-	char msgid[128] = { 0 };
-	if (SideValid (side))
-		snprintf (msgid, 128, "%s%d", _msgid.data (),
-			GetChessSet (side));
-	else
-		strncpy (msgid, _msgid.data (), 128);
-
-	cScrStr buffer;
-	SService<IDataSrv> pDS (g_pScriptManager);
-	pDS->GetString (buffer, "chess", msgid, "", "strings");
-
-	std::string result = (const char*) buffer;
-	buffer.Free ();
-	return result;
+	std::ostringstream msgid;
+	msgid << _msgid;
+	if (side.is_valid ())
+		msgid << ChessSet (side).number;
+	return Mission::get_text ("strings", "chess", msgid.str ());
 
 }
 
-} // namespace chess
+} // namespace Chess
 
 
 
-/* Fade */
 
-cScr_Fade::cScr_Fade (const char* pszName, int iHostObjId)
-	: cBaseScript (pszName, iHostObjId),
-	  SCRIPT_VAROBJ (Fade, state, iHostObjId)
+// ChessSet
+
+ChessSet::ChessSet (int _number)
+	: number (_number)
 {}
 
-long
-cScr_Fade::OnBeginScript (sScrMsg*, cMultiParm&)
+ChessSet::ChessSet (Side side)
+	: number (side.is_valid ()
+		? QuestVar (String ("chess_set_") + side.get_code ()).get ()
+		: 0)
+{}
+
+Side
+ChessSet::get_side () const
 {
-	state.Init (NONE);
-	return 0;
+	for (Side side : { Side::WHITE, Side::BLACK })
+		if (QuestVar (String ("chess_set_") + side.get_code ()).get ()
+		    == number)
+			return side;
+	return Side::NONE;
 }
 
-long
-cScr_Fade::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
+Object
+ChessSet::get_metaprop () const
 {
-	if (!strcmp (pMsg->message, "FadeIn"))
-	{
-		state = FADING_IN;
-		Fade ();
-	}
-
-	else if (!strcmp (pMsg->message, "FadeOut"))
-	{
-		state = FADING_OUT;
-		Fade ();
-	}
-
-	else if (!strcmp (pMsg->message, "FadeAway"))
-	{
-		state = FADING_AWAY;
-		Fade ();
-	}
-
-	return cBaseScript::OnMessage (pMsg, mpReply);
+	std::ostringstream name;
+	name << "M-ChessSet" << number;
+	return Object (name.str ());
 }
 
-long
-cScr_Fade::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
+Color
+ChessSet::get_color () const
 {
-	if (!strcmp (pMsg->name, "Fade"))
-		Fade ();
+	return Parameter<Color> (get_metaprop (), "chess_color",
+		Color (0xffffff));
+}
 
-	return cBaseScript::OnTimer (pMsg, mpReply);
+
+
+// HUDMessage
+
+const HUD::ZIndex
+HUDMessage::PRIORITY = 20;
+
+const int
+HUDMessage::BORDER = 2;
+
+const int
+HUDMessage::PADDING = 12;
+
+HUDMessage::HUDMessage (const Object& _topic, const String& _text,
+		const Color& color, bool _enabled)
+	: HUDElement (), enabled (_enabled), topic (_topic), text (_text)
+{
+	initialize (PRIORITY);
+	set_color (color);
+}
+
+HUDMessage::~HUDMessage ()
+{}
+
+void
+HUDMessage::set_topic (const Object& _topic)
+{
+	topic = _topic;
+	schedule_redraw ();
+}
+
+String
+HUDMessage::get_text () const
+{
+	return text;
 }
 
 void
-cScr_Fade::Fade ()
+HUDMessage::set_text (const String& _text)
 {
-	if (state == NONE) return;
-
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	cMultiParm _opacity;
-	pPS->Get (_opacity, ObjId (), "RenderAlpha", NULL);
-	if (_opacity.type != kMT_Float) return;
-
-	float opacity = float (_opacity) +
-		((state == FADING_IN) ? 0.05 : -0.05);
-	opacity = fclamp (opacity, 0.0, 1.0);
-
-	pPS->SetSimple (ObjId (), "RenderAlpha", opacity);
-
-	for (LinkIter cont (ObjId (), 0, "Contains"); cont; ++cont)
-		pPS->SetSimple (cont.Destination (), "RenderAlpha", opacity);
-	for (LinkIter detl (0, ObjId (), "DetailAttachement"); detl; ++detl)
-		pPS->SetSimple (detl.Source (), "RenderAlpha", opacity);
-	for (LinkIter part (0, ObjId (), "ParticleAttachement"); part; ++part)
-		pPS->SetSimple (part.Source (), "RenderAlpha", opacity);
-	for (LinkIter phys (0, ObjId (), "PhysAttach"); phys; ++phys)
-		pPS->SetSimple (phys.Source (), "RenderAlpha", opacity);
-
-	float max_opacity = GetObjectParamFloat (ObjId (), "MaxOpacity", 1.0);
-	if ((state == FADING_IN)
-		? (opacity < max_opacity - 0.04)
-		: (opacity > 0.04))
-	{
-		unsigned delay =
-			GetObjectParamInt (ObjId (), "FadeTime", 1000) / 20;
-		SetTimedMessage ("Fade", delay, kSTM_OneShot);
-	}
-	else
-	{
-		if (state == FADING_AWAY)
-			DestroyObject (ObjId ());
-		else
-			state = NONE;
-	}
-}
-
-
-
-/* ConfirmVerb */
-
-cScr_ConfirmVerb::cScr_ConfirmVerb (const char* pszName, int iHostObjId)
-	: cBaseScript (pszName, iHostObjId)
-{}
-
-long
-cScr_ConfirmVerb::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
-{
-	SInterface<ITraitManager> pTM (g_pScriptManager);
-	SService<IObjectSrv> pOS (g_pScriptManager);
-	object clone; pOS->Create (clone, pTM->GetArchetype (ObjId ()));
-	CreateLink ("Owns", ObjId (), clone);
-
-	SService<IContainSrv> pCS (g_pScriptManager);
-	pCS->Add (clone, StrToObject ("Player"), kContainTypeGeneric, false);
-
-	SService<IDarkUISrv> pDUIS (g_pScriptManager);
-	pDUIS->InvSelect (clone);
-
-	AddSingleMetaProperty ("M-Transparent", ObjId ());
-	return 0;
-}
-
-long
-cScr_ConfirmVerb::OnFrobInvEnd (sFrobMsg*, cMultiParm&)
-{
-	// player said yes
-	object owner = LinkIter (0, ObjId (), "Owns").Source ();
-	RemoveSingleMetaProperty ("M-Transparent", owner);
-	char* message = GetObjectParamString (ObjId (), "Message", "TurnOn");
-	CDSend (message, owner);
-	g_pMalloc->Free (message);
-	// we are destroyed automatically
-	return 0;
-}
-
-long
-cScr_ConfirmVerb::OnContained (sContainedScrMsg* pMsg, cMultiParm&)
-{
-	if (pMsg->event == kContainRemove) // player said no
-	{
-		object owner = LinkIter (0, ObjId (), "Owns").Source ();
-		RemoveSingleMetaProperty ("M-Transparent", owner);
-		SetTimedMessage ("Reject", 10, kSTM_OneShot);
-	}
-	return 0;
-}
-
-long
-cScr_ConfirmVerb::OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply)
-{
-	if (!strcmp (pMsg->name, "Reject"))
-	{
-		DestroyObject (ObjId ());
-		return 0;
-	}
-	else
-		return cBaseScript::OnTimer (pMsg, mpReply);
-}
-
-
-
-/* Titled */
-
-cScr_Titled::cScr_Titled (const char* pszName, int iHostObjId)
-	: cBaseScript (pszName, iHostObjId)
-{}
-
-long
-cScr_Titled::OnWorldSelect (sScrMsg*, cMultiParm&)
-{
-	char* msgid = GetObjectParamString (ObjId (), "Title");
-	if (msgid != NULL)
-	{
-		std::string message = chess::Translate (msgid);
-		g_pMalloc->Free (msgid);
-		ShowString (message.data (),
-			std::max (CalcTextTime (message.data ()), 2000));
-	}
-	return 0;
-}
-
-long
-cScr_Titled::OnFrobWorldBegin (sFrobMsg*, cMultiParm&)
-{
-	ShowString ("", 1);
-	return 0;
-}
-
-
-
-/* ChessIntro */
-
-cScr_ChessIntro::cScr_ChessIntro (const char* pszName, int iHostObjId)
-	: cBaseScript (pszName, iHostObjId)
-{}
-
-long
-cScr_ChessIntro::OnSim (sSimMsg* pMsg, cMultiParm&)
-{
-	if (pMsg->fStarting)
-	{
-		for (ScriptParamsIter door (ObjId (), "ScenarioDoor");
-		     door; ++door)
-			DestroyObject (door);
-
-		SService<IPropertySrv> pPS (g_pScriptManager);
-		pPS->SetSimple (ObjId (), "Book", "welcome");
-	}
-	return 0;
-}
-
-long
-cScr_ChessIntro::OnTurnOn (sScrMsg* pMsg, cMultiParm&)
-{
-	// send ourself away, but continue to exist for later events
-	SService<IObjectSrv> pOS (g_pScriptManager);
-	pOS->Teleport (ObjId (), { 0, 0, 0 }, { 0, 0, 0 }, 0);
-
-	// make the gems inert
-	for (ScriptParamsIter gem (ObjId (), "Scenario"); gem; ++gem)
-	{
-		if (gem.Destination () != pMsg->from)
-			SimpleSend (ObjId (), gem.Destination (), "TurnOff");
-		AddSingleMetaProperty ("FrobInert", gem.Destination ());
-	}
-
-	// delete all but the correct herald
-	object herald = ScriptParamsIter (ObjId (), "TheHerald").Destination ();
-	for (ScriptParamsIter other (ObjId (), "Herald"); other; ++other)
-		if (other.Destination () != herald)
-			DestroyObject (other);
-
-	// begin the briefing (or skip if none)
-	object briefing = StrToObject ("TheBriefing");
-	if (briefing)
-	{
-		static const int actor = 1;
-		CreateLink ("AIConversationActor", briefing, herald, &actor);
-		SimpleSend (ObjId (), briefing, "TurnOn");
-	}
-	else
-		SimpleSend (ObjId (), ObjId (), "DoneBriefing");
-
-	return 0;
-}
-
-long
-cScr_ChessIntro::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
-{
-	if (!strcmp (pMsg->message, "SubtitleSpeech")
-		&& pMsg->data.type == kMT_String)
-	{
-		SService<IQuestSrv> pQS (g_pScriptManager);
-		char msgid[128] = { 0 };
-		snprintf (msgid, 128, "m%d_%s",
-			pQS->Get ("chess_mission"), (const char*) pMsg->data);
-
-		std::string subtitle = chess::Translate (msgid);
-		ShowString (subtitle.data (), CalcTextTime (subtitle.data ()));
-	}
-
-	else if (!strcmp (pMsg->message, "DoneBriefing"))
-	{
-		SService<IQuestSrv> pQS (g_pScriptManager);
-		pQS->Set ("goal_state_0", 1, kQuestDataMission);
-	}
-
-	return cBaseScript::OnMessage (pMsg, mpReply);
-}
-
-
-
-/* ChessScenario */
-
-cScr_ChessScenario::cScr_ChessScenario (const char* pszName, int iHostObjId)
-	: cBaseScript (pszName, iHostObjId)
-{}
-
-long
-cScr_ChessScenario::OnWorldSelect (sScrMsg*, cMultiParm&)
-{
-	char msgid[128] = { 0 };
-	snprintf (msgid, 128, "title_%d",
-		GetObjectParamInt (ObjId (), "Mission"));
-
-	cScrStr buffer;
-	SService<IDataSrv> pDS (g_pScriptManager);
-	pDS->GetString (buffer, "titles", msgid, "", "strings");
-
-	ShowString (buffer, CalcTextTime (buffer),
-		GetChessSetColor (GetObjectParamInt (ObjId (), "WhiteSet"))); //FIXME assumes side?
-	buffer.Free ();
-
-	return 0;
-}
-
-long
-cScr_ChessScenario::OnFrobWorldEnd (sFrobMsg*, cMultiParm&)
-{
-	object intro = StrToObject ("TheIntro");
-	int mission = GetObjectParamInt (ObjId (), "Mission");
-
-	PlaySchemaAmbient (ObjId (), StrToObject ("pickup_gem"));
-
-	SService<IDarkGameSrv> pDGS (g_pScriptManager);
-	pDGS->SetNextMission (mission);
-
-	SService<IQuestSrv> pQS (g_pScriptManager);
-	pQS->Set ("chess_mission", mission, kQuestDataMission);
-
-	for (ScriptParamsIter herald (ObjId (), "Herald"); herald; ++herald)
-		CreateLink ("ScriptParams", intro, herald.Destination (),
-			"TheHerald");
-
-	SimpleSend (ObjId (), intro, "TurnOn");
-	return 0;
-}
-
-
-
-/* ChessClock */ //FIXME per side
-
-cScr_ChessClock::cScr_ChessClock (const char* pszName, int iHostObjId)
-	: cBaseScript (pszName, iHostObjId),
-	  SCRIPT_VAROBJ (ChessClock, time_control, iHostObjId),
-	  SCRIPT_VAROBJ (ChessClock, running, iHostObjId),
-	  focused (false)
-{}
-
-long
-cScr_ChessClock::OnBeginScript (sScrMsg*, cMultiParm&)
-{
-	time_control.Init (GetObjectParamInt (ObjId (), "ClockTime"));
-	running.Init (time_control > 0);
-	return 0;
-}
-
-long
-cScr_ChessClock::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
-{
-	if (!strcmp (pMsg->message, "TickTock"))
-		TickTock ();
-
-	else if (!strcmp (pMsg->message, "StopTheClock"))
-		StopTheClock ();
-
-	return cBaseScript::OnMessage (pMsg, mpReply);
-}
-
-long
-cScr_ChessClock::OnWorldSelect (sScrMsg*, cMultiParm&)
-{
-	focused = true;
-	ShowTimeRemaining ();
-	return 0;
-}
-
-long
-cScr_ChessClock::OnWorldDeSelect (sScrMsg*, cMultiParm&)
-{
-	focused = false;
-	return 0;
+	text = _text;
+	schedule_redraw ();
 }
 
 void
-cScr_ChessClock::TickTock ()
+HUDMessage::set_color (const Color& color)
 {
-	SService<IPropertySrv> pPS (g_pScriptManager);
+	color_fg = color;
 
+	// The background is a near-black version of the foreground.
+	LabColor _color_bg (color);
+	_color_bg.L = -0.2 * (100.0 - _color_bg.L);
+	color_bg = _color_bg;
+
+	// The border is slightly darker than the foreground.
+	LabColor _color_border (color);
+	_color_border.L /= 3.0;
+	color_border = _color_border;
+}
+
+bool
+HUDMessage::prepare ()
+{
+	if (!enabled) return false;
+
+	// Get the canvas and text size and calculate the element size.
+	CanvasSize canvas = Engine::get_canvas_size (),
+		text_size = get_text_size (text),
+		elem_size;
+	elem_size.w = BORDER + PADDING + text_size.w + PADDING + BORDER;
+	elem_size.h = BORDER + PADDING + text_size.h + PADDING + BORDER;
+
+	// Get the topic's position in canvas coordinates.
+	CanvasPoint topic_pos;
+	Player player;
+	if (topic == Object::NONE || topic == player ||
+	    player.is_in_inventory (topic))
+		topic_pos = CanvasPoint (canvas.w / 2, canvas.h / 2);
+	else
+	{
+		topic_pos = centroid_to_canvas (topic);
+		if (!topic_pos.valid ()) return false;
+	}
+
+	// Calculate the element position.
+	CanvasPoint elem_pos;
+	elem_pos.x = std::max (0, std::min (canvas.w - elem_size.w,
+		topic_pos.x - elem_size.w / 2));
+	elem_pos.y = std::max (0, std::min (canvas.h - elem_size.h,
+		topic_pos.y + 2 * PADDING)); // slightly below center
+
+	set_position (elem_pos);
+	set_size (elem_size);
+	return true;
+}
+
+void
+HUDMessage::redraw ()
+{
+	// draw background
+	set_drawing_color (color_bg);
+	fill_area ();
+
+	// draw border
+	set_drawing_color (color_border);
+	draw_box ();
+
+	// draw text
+	set_drawing_color (color_fg);
+	draw_text (text, CanvasPoint (BORDER+PADDING, BORDER+PADDING));
+}
+
+
+
+// NGCTitled
+
+NGCTitled::NGCTitled (const String& _name, const Object& _host,
+		const CIString& _title_msgid)
+	: Script (_name, _host),
+	  PARAMETER_ (title_msgid, _title_msgid, "")
+{
+	listen_message ("WorldSelect", &NGCTitled::on_world_select);
+	listen_message ("WorldDeSelect", &NGCTitled::on_world_deselect);
+	listen_message ("FrobWorldBegin", &NGCTitled::on_frob_world_begin);
+}
+
+void
+NGCTitled::initialize ()
+{
+	title.reset (new HUDMessage (host ()));
+	title->enabled = false;
+	if (title_msgid.exists () && title->get_text ().empty ())
+		title->set_text (Chess::translate (title_msgid));
+}
+
+Message::Result
+NGCTitled::on_world_select (Message&)
+{
+	if (title) title->enabled = true;
+	return Message::CONTINUE;
+}
+
+Message::Result
+NGCTitled::on_world_deselect (Message&)
+{
+	if (title) title->enabled = false;
+	return Message::CONTINUE;
+}
+
+Message::Result
+NGCTitled::on_frob_world_begin (FrobMessage&)
+{
+	if (title) title->enabled = false;
+	return Message::CONTINUE;
+}
+
+
+
+// NGCIntro
+
+NGCIntro::NGCIntro (const String& _name, const Object& _host)
+	: Script (_name, _host)
+{
+	listen_message ("PostSim", &NGCIntro::prepare_mission);
+	listen_message ("ChooseScenario", &NGCIntro::choose_scenario);
+	listen_message ("StartBriefing", &NGCIntro::start_briefing);
+	listen_message ("ConversationEnd", &NGCIntro::finish_briefing);
+}
+
+void
+NGCIntro::initialize ()
+{
+	host_as<Conversation> ().subscribe ();
+}
+
+Message::Result
+NGCIntro::prepare_mission (Message&)
+{
+	// Destroy the doors blocking off the scenario alcoves.
+	for (auto& door : ScriptParamsLink::get_all_by_data
+				(host (), "ScenarioDoor"))
+		door.get_dest ().destroy ();
+
+	// Switch the scroll (this object) from "script-problem" to "welcome".
+	host_as<Readable> ().book_name = "welcome";
+
+	// Create a goto target for the heralds and attach to the player.
+	Object target = Object::create (Object ("Marker"));
+	target.set_name ("BeforePlayer");
+	DetailAttachementLink::create (target, Player (),
+		DetailAttachementLink::Type::OBJECT, 0, AI::Joint::NONE,
+		{ 4.0f, 0.0f, 0.0f });
+
+	return Message::HALT;
+}
+
+Message::Result
+NGCIntro::choose_scenario (Message& message)
+{
+	Object scenario = message.get_from ();
+
+	// Disable the other scenario gems.
+	for (auto& gem : ScriptParamsLink::get_all_by_data (host (), "Scenario"))
+		if (gem.get_dest () != scenario)
+			GenericMessage ("Disable").send (host (), gem.get_dest ());
+
+	// Make this scenario's herald the actor in the briefing conversation.
+	Object herald = ScriptParamsLink::get_one_by_data
+		(scenario, "Herald").get_dest ();
+	if (herald != Object::NONE)
+		host_as<Conversation> ().set_actor (1, herald);
+
+	return Message::HALT;
+}
+
+Message::Result
+NGCIntro::start_briefing (Message&)
+{
+	host_as<Conversation> ().start_conversation ();
+	return Message::HALT;
+}
+
+Message::Result
+NGCIntro::finish_briefing (ConversationMessage& message)
+{
+	if (message.get_conversation () == host ())
+		Objective (0).set_state (Objective::State::COMPLETE);
+	return Message::CONTINUE;
+}
+
+
+
+// NGCScenario
+
+NGCScenario::NGCScenario (const String& _name, const Object& _host)
+	: NGCTitled (_name, _host),
+	  disable_trans (*this, &NGCScenario::disable_step, "Disable", 50ul,
+		1000ul, Curve::LINEAR, "fade_time", "fade_curve"),
+	  PARAMETER (mission, 0),
+	  PARAMETER (chess_set_white, 0),
+	  PARAMETER (chess_set_black, 0),
+	  PERSISTENT (entered, false)
+{
+	listen_message ("FrobWorldEnd", &NGCScenario::select);
+	listen_message ("Disable", &NGCScenario::disable);
+	listen_message ("TurnOn", &NGCScenario::enter_environment);
+}
+
+void
+NGCScenario::initialize ()
+{
+	NGCTitled::initialize ();
+	if (title)
+	{
+		std::ostringstream msgid;
+		msgid << "title_" << mission;
+		title->set_text (Mission::get_text ("strings", "titles",
+			msgid.str ()));
+		title->set_color (ChessSet (chess_set_white).get_color ()); //FIXME assumes side?
+	}
+}
+
+Message::Result
+NGCScenario::select (FrobMessage& message)
+{
+	// Actually choose the scenario.
+	Mission::set_next (mission);
+
+	// Notify NGCIntro.
+	Object intro = ScriptParamsLink::get_one_by_data
+		(host (), "Scenario", true).get_dest ();
+	GenericMessage ("ChooseScenario").send (host (), intro);
+
+	// Play a frob sound and disable the gem.
+	SoundSchema ("pickup_gem").play_ambient ();
+	disable (message);
+
+	// Lower the chess table into the floor.
+	Object table = ScriptParamsLink::get_one_by_data
+		(host (), "Table").get_dest ();
+	GenericMessage ("Open").send (host (), table);
+
+	// Raise the false wall into the ceiling.
+	Object wall = ScriptParamsLink::get_one_by_data
+		(host (), "Wall").get_dest ();
+	GenericMessage ("Open").send (host (), wall);
+
+	return Message::HALT;
+}
+
+Message::Result
+NGCScenario::disable (Message&)
+{
+	// Disable the gem itself.
+	host ().add_metaprop (Object ("FrobInert"));
+	host_as<AmbientHacked> ().active = false;
+	host_as<AnimLight> ().set_light_mode (AnimLight::Mode::SMOOTH_DIM);
+	ObjectProperty ("StTweqRotate", host ()).set_field ("AnimS", 0); //TODO Use RotateTweq once available.
+	ObjectProperty ("StTweqScale", host ()).set_field ("AnimS", 0); //TODO Use ScaleTweq once available.
+
+	// Turn off the fill lighting (on the wall object).
+	AnimLight wall = ScriptParamsLink::get_one_by_data
+		(host (), "Wall").get_dest ();
+	wall.set_light_mode (AnimLight::Mode::SMOOTH_DIM);
+
+	// Fade out the gem and darken the preview image.
+	disable_trans.start ();
+
+	return Message::HALT;
+}
+
+bool
+NGCScenario::disable_step ()
+{
+	float level = disable_trans.interpolate (1.0f, 0.0f);
+
+	host_as<Rendered> ().opacity = level;
+
+	Rendered wall = ScriptParamsLink::get_one_by_data
+		(host (), "Wall").get_dest ();
+	wall.self_illumination = level;
+
+	return true;
+}
+
+Message::Result
+NGCScenario::enter_environment (Message&)
+{
+	// Only proceed once.
+	if (entered)
+		return Message::HALT;
+	else
+		entered = true;
+
+	// Close the false wall again.
+	TranslatingDoor wall = ScriptParamsLink::get_one_by_data
+		(host (), "Wall").get_dest ();
+	wall.base_speed = wall.base_speed * 2.0f;
+	wall.close_door ();
+
+	// Start the briefing.
+	Object intro = ScriptParamsLink::get_one_by_data
+		(host (), "Scenario", true).get_dest ();
+	GenericMessage ("StartBriefing").send (host (), intro);
+
+	return Message::HALT;
+}
+
+
+
+// NGCClock //FIXME per side
+
+NGCClock::NGCClock (const String& _name, const Object& _host)
+	: NGCTitled (_name, _host),
+	  PARAMETER_ (time_control, "clock_time", 0ul),
+	  PARAMETER_ (side, "chess_side", Side::NONE),
+	  PARAMETER_ (joint, "clock_joint", 0),
+	  PARAMETER_ (joint_low, "clock_low", 0.0f),
+	  PARAMETER_ (joint_high, "clock_high", 0.0f),
+	  PERSISTENT (running, false)
+{
+	listen_message ("TickTock", &NGCClock::tick_tock);
+	listen_message ("StopTheClock", &NGCClock::stop_the_clock);
+}
+
+void
+NGCClock::initialize ()
+{
+	NGCTitled::initialize ();
+	if (!running.exists ())
+		running = (time_control != 0ul);
+	if (title)
+		update_display ();
+}
+
+Message::Result
+NGCClock::tick_tock (Message& message)
+{
 	if (!running)
+		return Message::HALT;
+
+	// Check the time.
+	Time remaining = get_time_remaining ();
+	float pct_remaining = float (remaining) / float (Time (time_control));
+
+	// Update the clock joint.
+	if (joint >= 1 && joint <= 6 && joint_high > joint_low)
+		host_as<Rendered> ().joint_position [joint - 1]
+			= joint_low + pct_remaining * (joint_high - joint_low);
+
+	// Notify the game if time has run out.
+	if (remaining == 0ul)
 	{
-		if (focused)
-			ShowTimeRemaining ();
+		stop_the_clock (message);
+		SoundSchema ("dinner_bell").play (host ());
+
+		Object game = ScriptParamsLink::get_one_by_data
+			(host (), "Clock", true).get_dest ();
+		GenericMessage::with_data ("TimeControl", Side (side)).send
+			(host (), game);
+	}
+
+	// Update the time display.
+	else if (title)
+		update_display ();
+
+	return Message::HALT;
+}
+
+Message::Result
+NGCClock::stop_the_clock (Message&)
+{
+	running = false;
+	update_display ();
+	host ().add_metaprop (Object ("FrobInertFocusable"));
+	host_as<AmbientHacked> ().active = false;
+	SoundSchema ("button_rmz").play (host ());
+	return Message::HALT;
+}
+
+Time
+NGCClock::get_time_remaining () const
+{
+	return std::max (0l, long (Time (time_control)) -
+		QuestVar ("stat_time").get ());
+}
+
+void
+NGCClock::update_display ()
+{
+	if (!title) return;
+	Time remaining = get_time_remaining ();
+	bool last_minute = (remaining <= 60000ul);
+	const char* msgid = last_minute ? "time_seconds" : "time_minutes";
+	unsigned time = last_minute ? remaining.seconds () : remaining.minutes ();
+	title->set_text (Chess::translate_format (msgid, time));
+}
+
+
+
+// NGCFlag
+
+NGCFlag::NGCFlag (const String& _name, const Object& _host)
+	: NGCTitled (_name, _host),
+	  PARAMETER_ (message_name, "message", "TurnOn")
+{
+	listen_message ("FrobWorldEnd", &NGCFlag::ask_question);
+	listen_message ("FrobInvEnd", &NGCFlag::answered_yes);
+	listen_message ("Contained", &NGCFlag::answered_no);
+}
+
+Message::Result
+NGCFlag::ask_question (FrobMessage&)
+{
+	Object clone = host ().clone ();
+	Link::create ("Owns", host (), clone);
+
+	Player player;
+	player.add_to_inventory (clone);
+	player.select_item (clone);
+
+	host_as<Rendered> ().render_type = Rendered::RenderType::NONE;
+
+	return Message::HALT;
+}
+
+Message::Result
+NGCFlag::answered_yes (FrobMessage&)
+{
+	Rendered owner = Link::get_one ("~Owns", host ()).get_dest ();
+	owner.render_type = Rendered::RenderType::NORMAL;
+	GenericMessage (message_name->data ()).broadcast
+		(owner, "ControlDevice");
+	// This object (the clone) will be destroyed by the FrobInfo.
+	return Message::HALT;
+}
+
+Message::Result
+NGCFlag::answered_no (ContainmentMessage& message)
+{
+	if (message.get_event () == ContainmentMessage::REMOVE)
+	{
+		Rendered owner = Link::get_one ("~Owns", host ()).get_dest ();
+		owner.render_type = Rendered::RenderType::NORMAL;
+		host ().schedule_destruction (10ul);
+	}
+	return Message::HALT;
+}
+
+
+
+// NGCSquare
+
+NGCSquare::NGCSquare (const String& _name, const Object& _host)
+	: Script (_name, _host),
+	  PERSISTENT (state, State::EMPTY),
+	  PERSISTENT (piece, Piece ()),
+	  decal_fade (*this, &NGCSquare::decal_fade_step, "DecalFade"),
+	  PARAMETER (decal_offset, Vector ()),
+	  button_fade (*this, &NGCSquare::button_fade_step, "ButtonFade"),
+	  PARAMETER (button_offset, Vector ())
+{
+	listen_message ("UpdateState", &NGCSquare::update_state);
+	listen_message ("Select", &NGCSquare::select);
+	listen_message ("Deselect", &NGCSquare::deselect);
+	listen_message ("TurnOn", &NGCSquare::on_turn_on);
+}
+
+Message::Result
+NGCSquare::update_state (Message& message)
+{
+	state = message.get_data (Message::DATA1, State::EMPTY);
+
+	if (message.has_data (Message::DATA2))
+		piece = message.get_data (Message::DATA2, Piece ());
+	// Otherwise, the piece hasn't changed.
+
+	update_decal ();
+	update_button ();
+
+	return Message::HALT;
+}
+
+Rendered
+NGCSquare::get_decal () const
+{
+	return ScriptParamsLink::get_one_by_data (host (), "Decal").get_dest ();
+}
+
+void
+NGCSquare::update_decal ()
+{
+	Rendered decal = get_decal ();
+
+	Piece display_piece = piece;
+	switch (state)
+	{
+	case State::FRIENDLY_INERT:
+	case State::CAN_MOVE_FROM:
+		break;
+	case State::CAN_MOVE_TO:
+		display_piece.type = Piece::Type::NONE;
+		display_piece.side = piece->side.get_opponent ();
+		break;
+	default:
+		if (decal != Object::NONE)
+		{
+			Time fade = Parameter<Time>
+				(decal, "fade_time", { 500ul });
+			decal.schedule_destruction (fade);
+			decal_fade.length = fade;
+			decal_fade.start ();
+		}
 		return;
 	}
 
-	// check the time
-	unsigned time_remaining = GetTimeRemaining ();
-	float pct_remaining = float (time_remaining) / float (time_control);
+	if (decal != Object::NONE)
+		decal.destroy ();
 
-	// update the clock joint
-	int joint = GetObjectParamInt (ObjId (), "ClockJoint");
-	float low = GetObjectParamFloat (ObjId (), "ClockLow"),
-		high = GetObjectParamFloat (ObjId (), "ClockHigh"),
-		range = high - low;
-	if (joint >= 1 && joint <= 6 && range > 0.0)
-	{
-		char joint_name[] = "Joint \0";
-		joint_name[6] = '0' + joint;
-		pPS->Set (ObjId (), "JointPos", joint_name,
-			low + pct_remaining * range);
-	}
+	decal = Object::create (Object ("ChessDecal"));
+	if (decal == Object::NONE) return; // ???
 
-	// notify if time has run out
-	if (time_remaining == 0)
-	{
-		StopTheClock ();
-		PlaySchema (ObjId (), StrToObject ("dinner_bell"), ObjId ());
-		SimpleSend (ObjId (), StrToObject ("TheGame"),
-			"TimeControl", GetSide (ObjId ()));
-	}
+	ScriptParamsLink::create (host (), decal, "Decal");
 
-	// update the displayed time if focused
-	else if (focused)
-		ShowTimeRemaining ();
+	Vector location = host ().get_location () + decal_offset,
+		rotation (0.0f, 0.0f, 180.0f + 90.0f *
+			display_piece.side.get_facing_direction ());
+	decal.set_position (location, rotation);
+
+	std::ostringstream texture;
+	texture << "obj\\txt16\\decal-"
+		<< (display_piece.is_valid () ? display_piece.get_code () : 'z')
+		<< (state == State::FRIENDLY_INERT
+			? 0 : ChessSet (display_piece.side).number);
+	decal.replacement_texture [0u] = texture.str ();
+
+	Time fade = Parameter<Time> (decal, "fade_time", { 500ul });
+	decal_fade.length = fade;
+	decal_fade.start ();
+}
+
+bool
+NGCSquare::decal_fade_step ()
+{
+	Rendered decal = get_decal ();
+	if (decal == Object::NONE) return false;
+	bool fade_in = state != State::EMPTY;
+	decal.opacity = decal_fade.interpolate
+		(fade_in ? 0.0f : 1.0f, fade_in ? 1.0f : 0.0f);
+	return true;
+}
+
+Interactive
+NGCSquare::get_button () const
+{
+	return ScriptParamsLink::get_one_by_data (host (), "Button").get_dest ();
 }
 
 void
-cScr_ChessClock::StopTheClock ()
+NGCSquare::update_button ()
 {
-	running = false;
-	AddSingleMetaProperty ("FrobInertFocusable", ObjId ());
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	pPS->Remove (ObjId (), "AmbientHacked");
-	PlaySchema (ObjId (), StrToObject ("button_rmz"), ObjId ());
-}
+	Interactive button = get_button ();
 
-unsigned
-cScr_ChessClock::GetTimeRemaining ()
-{
-	SService<IQuestSrv> pQS (g_pScriptManager);
-	return std::max (time_control - pQS->Get ("stat_time") / 1000, 0);
-}
-
-void
-cScr_ChessClock::ShowTimeRemaining ()
-{
-	unsigned time_remaining = GetTimeRemaining ();
-	bool last_minute = (time_remaining <= 60);
-	const char* msgid = last_minute ? "time_seconds" : "time_minutes";
-	unsigned time = last_minute ? time_remaining : (time_remaining / 60);
-	ShowString (chess::TranslateFormat (msgid, time).data (), 1010);
-}
-
-
-
-/* ChessSquare */
-
-cScr_ChessSquare::cScr_ChessSquare (const char* pszName, int iHostObjId)
-	: cBaseScript (pszName, iHostObjId),
-	  SCRIPT_VAROBJ (ChessSquare, state, iHostObjId),
-	  SCRIPT_VAROBJ (ChessSquare, piece, iHostObjId)
-{}
-
-long
-cScr_ChessSquare::OnBeginScript (sScrMsg*, cMultiParm&)
-{
-	state.Init (INACTIVE);
-	piece.Init (chess::Piece::NONE_CODE);
-	return 0;
-}
-
-long
-cScr_ChessSquare::OnMessage (sScrMsg* pMsg, cMultiParm& mpReply)
-{
-	if (!strcmp (pMsg->message, "UpdateState") &&
-		pMsg->data.type == kMT_Int)
+	Side side = piece->side;
+	Vector rotation;
+	switch (state)
 	{
-		state = (int) pMsg->data;
-
-		if (pMsg->data2.type == kMT_Int)
-			piece = (int) pMsg->data2;
-		// otherwise the piece hasn't changed
-
-		DestroyAttachments ();
-		if (state != INACTIVE)
+	case State::CAN_MOVE_FROM:
+		rotation.z = 180.0f + 90.0f * side.get_facing_direction ();
+		break;
+	case State::CAN_MOVE_TO:
+		side = side.get_opponent ();
+		rotation.y = 90.0f;
+		break;
+	default:
+		if (button != Object::NONE)
 		{
-			CreateDecal ();
-			if (state != FRIENDLY_INERT)
-				CreateButton ();
+			button.add_metaprop (Object ("FrobInert"));
+			Time fade = Parameter<Time>
+				(button, "fade_time", { 500ul });
+			button.schedule_destruction (fade);
+			button_fade.length = fade;
+			button_fade.start ();
 		}
+		return;
 	}
 
-	else if (!strcmp (pMsg->message, "Select"))
-	{
-		for (ScriptParamsIter bttn (ObjId (), "Button"); bttn; ++bttn)
-		{
-			AddSingleMetaProperty ("M-SelectedSquare",
-				bttn.Destination ());
-			SimpleSend (ObjId (), bttn.Destination (), "TurnOn");
-		}
+	if (button != Object::NONE)
+		button.destroy ();
 
-		for (LinkIter piece (ObjId (), 0, "Population"); piece; ++piece)
-			SimpleSend (ObjId (), piece.Destination (), "Select");
+	std::ostringstream archetype_name;
+	archetype_name << "ChessButton" << ChessSet (side).number;
+	Object archetype (archetype_name.str ());
+	if (archetype == Object::NONE) return; // ???
 
-		for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
-			SimpleSend (ObjId (), move.Destination (),
-				"UpdateState", CAN_MOVE_TO,
-				(int) piece);
-	}
+	button = Object::create (archetype);
+	if (button == Object::NONE) return; // ???
 
-	else if (!strcmp (pMsg->message, "Deselect"))
-	{
-		for (ScriptParamsIter bttn (ObjId (), "Button"); bttn; ++bttn)
-		{
-			SimpleSend (ObjId (), bttn.Destination (), "TurnOff");
-			RemoveSingleMetaProperty ("M-SelectedSquare",
-				bttn.Destination ());
-		}
+	ScriptParamsLink::create (host (), button, "Button");
+	Link::create ("ControlDevice", button, host ());
 
-		for (LinkIter piece (ObjId (), 0, "Population"); piece; ++piece)
-			SimpleSend (ObjId (), piece.Destination (), "Deselect");
+	Vector location = host ().get_location () + button_offset;
+	button.set_position (location, rotation);
 
-		for (LinkIter move (ObjId (), 0, "Route"); move; ++move)
-			SimpleSend (ObjId (), move.Destination (),
-				"UpdateState", INACTIVE, chess::Piece::NONE_CODE);
-	}
-
-	return cBaseScript::OnMessage (pMsg, mpReply);
+	Time fade = Parameter<Time> (button, "fade_time", { 500ul });
+	button_fade.length = fade;
+	button_fade.start ();
 }
 
-long
-cScr_ChessSquare::OnTurnOn (sScrMsg*, cMultiParm&)
+bool
+NGCSquare::button_fade_step ()
 {
-	if (state == CAN_MOVE_FROM)
-	{
-		PlaySchemaAmbient (ObjId (), StrToObject ("bow_begin"));
-		SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectFrom");
-	}
-
-	else if (state == CAN_MOVE_TO)
-	{
-		PlaySchemaAmbient (ObjId (), StrToObject ("pickup_gem"));
-		SimpleSend (ObjId (), StrToObject ("TheGame"), "SelectTo");
-	}
-
-	return 0;
+	Interactive button = get_button ();
+	if (button == Object::NONE) return false;
+	bool fade_in = (state != State::EMPTY && state != State::FRIENDLY_INERT);
+	button.opacity = button_fade.interpolate
+		(fade_in ? 0.0f : 1.0f, fade_in ? 1.0f : 0.0f);
+	return true;
 }
 
-object
-cScr_ChessSquare::CreateDecal ()
+Message::Result
+NGCSquare::select (Message&)
 {
-	SService<IObjectSrv> pOS (g_pScriptManager);
-	object decal; pOS->Create (decal, StrToObject ("ChessDecal"));
-	if (!decal) return decal;
-
-	chess::Piece _piece (piece);
-	if (state == CAN_MOVE_TO)
+	Interactive button = get_button ();
+	if (button != Object::NONE)
 	{
-		_piece.type = chess::Piece::NONE;
-		_piece.side = chess::Opponent (_piece.side);
+		button.add_metaprop (Object ("M-SelectedSquare"));
+		GenericMessage ("TurnOn").send (host (), button);
 	}
 
-	char texture[128] = { 0 };
-	snprintf (texture, 128, "obj/txt16/decal-%c%d",
-		_piece.Valid () ? _piece.GetCode () : 'z',
-		state == FRIENDLY_INERT ? 0 : GetChessSet (_piece.side));
+	Object piece_obj = Link::get_one ("Population", host ()).get_dest ();
+	if (piece_obj != Object::NONE)
+		GenericMessage ("Select").send (host (), piece_obj);
 
-	SService<IPropertySrv> pPS (g_pScriptManager);
-	pPS->SetSimple (decal, "OTxtRepr0", texture);
+	for (auto& move : Link::get_all ("Route", host ()))
+		GenericMessage::with_data ("UpdateState", State::CAN_MOVE_TO,
+			Piece (piece)).send (host (), move.get_dest ());
 
-	CreateLink ("ScriptParams", ObjId (), decal, "Decal");
-	SimpleSend (ObjId (), decal, "FadeIn");
-
-	cScrVec position, facing; pOS->Position (position, ObjId ());
-	position.z += GetObjectParamFloat (ObjId (), "DecalZ");
-	facing.z = 180.0 + 90.0 * chess::SideFacing (_piece.side);
-	pOS->Teleport (decal, position, facing, 0);
-
-	return decal;
+	return Message::HALT;
 }
 
-object
-cScr_ChessSquare::CreateButton ()
+Message::Result
+NGCSquare::deselect (Message&)
 {
-	chess::Piece _piece (piece);
-	if (state == CAN_MOVE_TO)
+	Interactive button = get_button ();
+	if (button != Object::NONE)
 	{
-		_piece.type = chess::Piece::NONE;
-		_piece.side = chess::Opponent (_piece.side);
+		GenericMessage ("TurnOff").send (host (), button);
+		button.remove_metaprop (Object ("M-SelectedSquare"));
 	}
 
-	char _archetype[128] = { 0 };
-	snprintf (_archetype, 128, "ChessButton%d", GetChessSet (_piece.side));
+	Object piece_obj = Link::get_one ("Population", host ()).get_dest ();
+	if (piece_obj != Object::NONE)
+		GenericMessage ("Deselect").send (host (), piece_obj);
 
-	SService<IObjectSrv> pOS (g_pScriptManager);
-	object archetype = StrToObject (_archetype);
-	if (!archetype) return object ();
+	for (auto& move : Link::get_all ("Route", host ()))
+		GenericMessage::with_data ("UpdateState", State::EMPTY,
+			Piece ()).send (host (), move.get_dest ());
 
-	object button; pOS->Create (button, archetype);
-	if (!button) return button;
-
-	CreateLink ("ScriptParams", ObjId (), button, "Button");
-	CreateLink ("ControlDevice", button, ObjId ());
-	SimpleSend (ObjId (), button, "FadeIn");
-
-	cScrVec position, facing; pOS->Position (position, ObjId ());
-	position.z += GetObjectParamFloat (ObjId (), "ButtonZ");
-	if (state == CAN_MOVE_FROM)
-		facing.z = 180.0 + 90.0 * chess::SideFacing (_piece.side);
-	else // CAN_MOVE_TO
-		facing.y = 90.0;
-	pOS->Teleport (button, position, facing, 0);
-
-	return button;
+	return Message::HALT;
 }
 
-void
-cScr_ChessSquare::DestroyAttachments ()
+Message::Result
+NGCSquare::on_turn_on (Message&)
 {
-	for (ScriptParamsIter button (ObjId (), "Button"); button; ++button)
-		SimpleSend (ObjId (), button.Destination (), "FadeAway");
-	for (ScriptParamsIter decal (ObjId (), "Decal"); decal; ++decal)
-		SimpleSend (ObjId (), decal.Destination (), "FadeAway");
+	switch (state)
+	{
+	case State::CAN_MOVE_FROM:
+		SoundSchema ("bow_begin").play_ambient ();
+		GenericMessage ("SelectFrom").send (host (), Object ("TheGame"));
+		return Message::HALT;
+	case State::CAN_MOVE_TO:
+		SoundSchema ("pickup_gem").play_ambient ();
+		GenericMessage ("SelectTo").send (host (), Object ("TheGame"));
+		return Message::HALT;
+	default:
+		return Message::ERROR;
+	}
 }
 

@@ -21,11 +21,9 @@
 #ifndef NGCGAME_HH
 #define NGCGAME_HH
 
-#include <Thief/Thief.hh>
-using namespace Thief;
-
+#include "NGC.hh"
+#include "ChessGame.hh"
 #include "ChessEngine.hh"
-using namespace Chess;
 
 class NGCGame : public Script
 {
@@ -42,7 +40,7 @@ private:
 
 	// Game and board state
 
-	void initialize ();
+	virtual void initialize ();
 
 	Message::Result start_game (Message&);
 	void arrange_board (const Object& origin, bool proxy);
@@ -71,7 +69,7 @@ private:
 
 	void start_move (const Move::Ptr&, bool from_engine);
 	Message::Result finish_move (Message&);
-	void place_proxy (Object& proxy, const Object& square);
+	void place_proxy (Rendered proxy, const Object& square);
 
 	// Endgame
 

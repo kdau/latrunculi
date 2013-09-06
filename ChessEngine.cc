@@ -26,12 +26,19 @@
 
 namespace Chess {
 
+#ifdef DEBUG
+#define ENGINE_DEBUG_DEFAULT 1
+#else
+#define ENGINE_DEBUG_DEFAULT 0
+#endif
+
 
 
 Engine::Engine (const String& program_path)
 	: ein_buf (nullptr), ein (nullptr), ein_h (nullptr),
 	  eout_buf (nullptr), eout (nullptr),
 	  difficulty (Thief::Difficulty::HARD),
+	  debug (Thief::QuestVar ("debug_engine").get (ENGINE_DEBUG_DEFAULT)),
 	  started (false), calculating (false)
 {
 	launch (program_path);
@@ -39,9 +46,7 @@ Engine::Engine (const String& program_path)
 	write_command ("uci");
 	read_replies ("uciok");
 
-#ifdef DEBUG
-	write_command ("debug on");
-#endif
+	if (debug) write_command ("debug on");
 }
 
 Engine::~Engine ()
@@ -54,6 +59,8 @@ Engine::~Engine ()
 	try { if (ein) delete (ein); } catch (...) {}
 	try { if (ein_buf) delete (ein_buf); } catch (...) {}
 }
+
+
 
 void
 Engine::set_difficulty (Thief::Difficulty _difficulty)
@@ -75,6 +82,8 @@ Engine::clear_openings_book ()
 {
 	write_command ("setoption name OwnBook value false");
 }
+
+
 
 void
 Engine::start_game (const Position* initial)
@@ -102,6 +111,8 @@ Engine::set_position (const Position& position)
 		start_game (&position);
 }
 
+
+
 Thief::Time
 Engine::start_calculation ()
 {
@@ -127,6 +138,8 @@ Engine::stop_calculation ()
 	calculating = false;
 }
 
+
+
 bool
 Engine::has_resigned () const
 {
@@ -148,6 +161,8 @@ Engine::wait_until_ready ()
 	write_command ("isready");
 	read_replies ("readyok");
 }
+
+
 
 void
 Engine::launch (const String& program_path)
@@ -205,16 +220,17 @@ Engine::launch (const String& program_path)
 	::CloseHandle (proc_info.hProcess);
 	::CloseHandle (proc_info.hThread);
 
-#ifdef DEBUG
-	Thief::mono << "Chess::Engine: Info: The engine has been loaded from "
-		<< program_path << std::endl;
-#endif
+	if (debug)
+		Thief::mono << "Chess::Engine: Info: The engine has been "
+			"loaded from \"" << program_path << "\"." << std::endl;
 
 	return;
 #undef LAUNCH_CHECK
 launch_problem:
 	throw std::runtime_error ("could not launch chess engine");
 }
+
+
 
 void
 Engine::read_replies (const String& desired_reply)
@@ -229,8 +245,8 @@ Engine::read_replies (const String& desired_reply)
 			if (wait_count++ < 250u)
 				::Sleep (1u);
 			else // time out after ~250ms
-				throw std::runtime_error
-					("engine took too long to reply");
+				throw std::runtime_error ("engine took too "
+					"long to reply with " + desired_reply);
 
 		String full_reply;
 		std::getline (*ein, full_reply);
@@ -239,11 +255,9 @@ Engine::read_replies (const String& desired_reply)
 		if (full_reply.back () == '\r')
 			full_reply.erase (full_reply.size () - 1u, 1u);
 
-#ifdef DEBUG
-		if (full_reply != "readyok")
+		if (debug && full_reply != "readyok")
 			Thief::mono << "Chess::Engine -> " << full_reply
 				<< std::endl;
-#endif
 
 		size_t pos = full_reply.find_first_of (" \t");
 		last_reply = full_reply.substr (0u, pos);
@@ -287,10 +301,8 @@ Engine::write_command (const String& command)
 {
 	if (!eout) throw std::runtime_error ("no pipe to engine");
 	*eout << command << std::endl;
-#ifdef DEBUG
-	if (command != "isready")
+	if (debug && command != "isready")
 		Thief::mono << "Chess::Engine <- " << command << std::endl;
-#endif
 }
 
 

@@ -65,7 +65,7 @@ protected:
 	void end_game ();
 
 private:
-	char board [size_t (Rank::_COUNT)] [size_t (File::_COUNT)];
+	char board [N_RANKS] [N_FILES];
 	Side active_side;
 	unsigned castling_white, castling_black;
 	Square en_passant_square;
@@ -143,29 +143,6 @@ private:
 	bool confirm_possible_move (const Move::Ptr&);
 
 	Moves possible_moves;
-};
-
-
-
-// Check: unofficial (not in history) event type for downstream use
-
-class Check : public Event
-{
-public:
-	explicit Check (Side);
-
-	virtual MLAN serialize () const;
-
-	virtual Side get_side () const;
-
-	virtual String get_description () const;
-	virtual String get_concept () const;
-
-protected:
-	virtual bool equals (const Event&) const;
-
-private:
-	Side side;
 };
 
 

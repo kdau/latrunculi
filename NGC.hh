@@ -1,15 +1,11 @@
 /******************************************************************************
- *  custom.h
+ *  NGC.hh
  *
- *  Custom scripts for A Nice Game of Chess
  *  Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
- *
- *  Adapted in part from Public Scripts
- *  Copyright (C) 2005-2011 Tom N Harris <telliamed@whoopdedo.org>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
+ *  the Free Software Foundation; either version 3 of the License, or
  *  (at your option) any later version.
  *
  *  This program is distributed in the hope that it will be useful,
@@ -22,231 +18,213 @@
  *
  *****************************************************************************/
 
-#ifndef CUSTOM_H
-#define CUSTOM_H
+#ifndef NGC_HH
+#define NGC_HH
 
-#if !SCR_GENSCRIPTS
+#include <Thief/Thief.hh>
+using namespace Thief;
 
-#include "BaseScript.h"
-#include "scriptvars.h"
-#include "chess.h"
+#include "Chess.hh"
+using namespace Chess;
 
-enum class SquareState
+
+
+// ChessSet: wrapper for identifying and accessing chess sets in the gamesys.
+
+struct ChessSet
 {
-	INACTIVE,
-	FRIENDLY_INERT,
-	CAN_MOVE_FROM,
-	CAN_MOVE_TO
+	ChessSet (int number);
+	int number;
+
+	ChessSet (Side);
+	Side get_side () const;
+
+	Object get_metaprop () const;
+	Color get_color () const;
 };
 
-int get_chess_set (Side side);
-Color get_chess_set_color (int set_number);
-
-#endif // !SCR_GENSCRIPTS
 
 
+// HUDMessage: HUD element to display text messages associated with objects
 
-/**
- * Script: Fade
- * Inherits: BaseScript
- *
- * Fades an object in and out (opacity) in response to the FadeIn and FadeOut
- * messages. FadeAway works like FadeOut except that the object is destroyed
- * after it is fully transparent.
- */
-#if !SCR_GENSCRIPTS
-class cScr_Fade : public virtual cBaseScript
+class HUDMessage : public HUDElement
 {
 public:
-	cScr_Fade (const char* pszName, int iHostObjId);
+	typedef std::unique_ptr<HUDMessage> Ptr;
 
-protected:
-	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
+	HUDMessage (const Object& topic, const String& text = String (),
+		const Color& = Color (0xffffff), bool enabled = true);
+	virtual ~HUDMessage ();
+
+	bool enabled;
+	String identifier;
+
+	void set_topic (const Object&);
+
+	String get_text () const;
+	void set_text (const String&);
+
+	void set_color (const Color&);
 
 private:
-	void Fade ();
+	virtual bool prepare ();
+	virtual void redraw ();
 
-	enum State
+	static const HUD::ZIndex PRIORITY;
+	static const int BORDER, PADDING;
+
+	Object topic;
+	String text;
+	Color color_fg, color_bg, color_border;
+};
+
+
+
+// NGCTitled: Base class for objects whose titles are displayed while focused.
+
+class NGCTitled : public Script
+{
+public:
+	NGCTitled (const String& name, const Object& host,
+		const CIString& title_msgid = "title");
+
+protected:
+	virtual void initialize ();
+	HUDMessage::Ptr title;
+	Parameter<String> title_msgid;
+
+private:
+	Message::Result on_world_select (Message&);
+	Message::Result on_world_deselect (Message&);
+	Message::Result on_frob_world_begin (FrobMessage&);
+};
+
+
+
+// NGCIntro: Manages the introduction/scenario selection mission.
+
+class NGCIntro : public Script
+{
+public:
+	NGCIntro (const String& name, const Object& host);
+
+private:
+	virtual void initialize ();
+	Message::Result prepare_mission (Message&);
+	Message::Result choose_scenario (Message&);
+	Message::Result start_briefing (Message&);
+	Message::Result finish_briefing (ConversationMessage&);
+};
+
+
+
+// NGCScenario: In the introductory mission, selects one of the scenarios and
+//	signals NGCIntro to proceed.
+
+class NGCScenario : public NGCTitled
+{
+public:
+	NGCScenario (const String& name, const Object& host);
+
+private:
+	virtual void initialize ();
+
+	Message::Result select (FrobMessage&);
+
+	Message::Result disable (Message&);
+	bool disable_step ();
+	Transition disable_trans;
+
+	Message::Result enter_environment (Message&);
+
+	Parameter<int> mission, chess_set_white, chess_set_black;
+	Persistent<bool> entered;
+};
+
+
+
+// NGCClock: Handles time control and the game clock interface.
+
+class NGCClock : public NGCTitled
+{
+public:
+	NGCClock (const String& name, const Object& host);
+
+private:
+	virtual void initialize ();
+
+	Message::Result tick_tock (Message&);
+	Message::Result stop_the_clock (Message&);
+
+	Time get_time_remaining () const;
+	void update_display ();
+
+	Parameter<Time> time_control;
+	Parameter<Side> side;
+
+	Parameter<int> joint;
+	Parameter<float> joint_low, joint_high;
+
+	Persistent<bool> running;
+};
+
+
+
+// NGCFlag: Handles the draw, resignation, and exit-mission interface items.
+
+class NGCFlag : public NGCTitled
+{
+public:
+	NGCFlag (const String& name, const Object& host);
+
+private:
+	Message::Result ask_question (FrobMessage&);
+	Message::Result answered_yes (FrobMessage&);
+	Message::Result answered_no (ContainmentMessage&);
+
+	Parameter<String> message_name;
+};
+
+
+
+// NGCSquare: Handles interactions with a single square on the chess board.
+
+class NGCSquare : public Script
+{
+public:
+	enum class State
 	{
-		NONE,
-		FADING_IN,
-		FADING_OUT,
-		FADING_AWAY
-	};
-	script_int state; // State
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("Fade","BaseScript",cScr_Fade)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ConfirmVerb
- * Inherits: BaseScript
- *
- * When frobbed, displays an on-screen confirmation prompt. If confirmed, sends
- * the message in the @Message parameter along ControlDevice links.
- */
-#if !SCR_GENSCRIPTS
-class cScr_ConfirmVerb : public virtual cBaseScript
-{
-public:
-	cScr_ConfirmVerb (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnFrobInvEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnContained (sContainedScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTimer (sScrTimerMsg* pMsg, cMultiParm& mpReply);
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ConfirmVerb","BaseScript",cScr_ConfirmVerb)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: Titled
- * Inherits: BaseScript
- *
- * Displays the translated msgid named in the @Title parameter when the object
- * is focused in-world.
- */
-#if !SCR_GENSCRIPTS
-class cScr_Titled : public virtual cBaseScript
-{
-public:
-	cScr_Titled (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnFrobWorldBegin (sFrobMsg* pMsg, cMultiParm& mpReply);
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("Titled","BaseScript",cScr_Titled)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessIntro
- * Inherits: BaseScript
- *
- * Sets up the introduction/scenario selection mission.
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessIntro : public virtual cBaseScript
-{
-public:
-	cScr_ChessIntro (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnSim (sSimMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessIntro","BaseScript",cScr_ChessIntro)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessScenario
- * Inherits: BaseScript
- *
- * Selects one of the scenarios and proceeds to its mission.
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessScenario : public virtual cBaseScript
-{
-public:
-	cScr_ChessScenario (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnFrobWorldEnd (sFrobMsg* pMsg, cMultiParm& mpReply);
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessScenario","BaseScript",cScr_ChessScenario)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessClock
- * Inherits: BaseScript
- *
- * Handles time control and the game clock interface.
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessClock : public virtual cBaseScript
-{
-public:
-	cScr_ChessClock (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnWorldSelect (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnWorldDeSelect (sScrMsg* pMsg, cMultiParm& mpReply);
-
-	void TickTock ();
-	void StopTheClock ();
-
-	unsigned GetTimeRemaining ();
-	void ShowTimeRemaining ();
-
-	script_int time_control, running; // in seconds; bool
-	bool focused; // don't persist
-};
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessClock","BaseScript",cScr_ChessClock)
-#endif // SCR_GENSCRIPTS
-
-
-
-/**
- * Script: ChessSquare
- * Inherits: BaseScript
- *
- * Handles interactions with a single square on the chess board.
- */
-#if !SCR_GENSCRIPTS
-class cScr_ChessSquare : public virtual cBaseScript
-{
-public:
-	enum State
-	{
-		INACTIVE,
+		EMPTY,
 		FRIENDLY_INERT,
 		CAN_MOVE_FROM,
 		CAN_MOVE_TO
 	};
 
-	cScr_ChessSquare (const char* pszName, int iHostObjId);
-
-protected:
-	virtual long OnBeginScript (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnMessage (sScrMsg* pMsg, cMultiParm& mpReply);
-	virtual long OnTurnOn (sScrMsg* pMsg, cMultiParm& mpReply);
+	NGCSquare (const String& name, const Object& host);
 
 private:
-	object CreateDecal ();
-	object CreateButton ();
-	void DestroyAttachments ();
+	Message::Result update_state (Message&);
+	Persistent<State> state;
+	Persistent<Piece> piece;
 
-	script_int state; // State
-	script_int piece; // chess::Piece.GetCode ()
+	Rendered get_decal () const;
+	void update_decal ();
+	bool decal_fade_step ();
+	Transition decal_fade;
+	Parameter<Vector> decal_offset;
+
+	Interactive get_button () const;
+	void update_button ();
+	bool button_fade_step ();
+	Transition button_fade;
+	Parameter<Vector> button_offset;
+
+	Message::Result select (Message&);
+	Message::Result deselect (Message&);
+	Message::Result on_turn_on (Message&);
 };
-#else // SCR_GENSCRIPTS
-GEN_FACTORY("ChessSquare","BaseScript",cScr_ChessSquare)
-#endif // SCR_GENSCRIPTS
 
 
 
-#endif // CUSTOM_H
+#endif // NGC_HH
 

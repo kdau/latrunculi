@@ -25,12 +25,19 @@
 #ifndef CHESS_INL
 #define CHESS_INL
 
+
+
 namespace Thief {
 
+THIEF_LGMULTI_SPECIALIZE_ (Chess::Piece, LGMulti<int>, Chess::Piece ())
+THIEF_LGMULTI_SPECIALIZE_ (Chess::Side, LGMulti<int>, Chess::Side ())
+
 template<> bool Parameter<Chess::Side>::decode (const String& raw) const;
-template<> String Parameter<Chess::Side>::encode () const; // undefined
+template<> String Parameter<Chess::Side>::encode () const;
 
 } // namespace Thief
+
+
 
 namespace Chess {
 

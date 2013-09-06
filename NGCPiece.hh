@@ -21,19 +21,15 @@
 #ifndef NGCPIECE_HH
 #define NGCPIECE_HH
 
-#include <Thief/Thief.hh>
-using namespace Thief;
+#include "NGC.hh"
 
-#include "Chess.hh"
-using namespace Chess;
-
-class NGCPiece : public Script //FIXME inherit from Fade or replace functionality
+class NGCPiece : public Script
 {
 public:
 	NGCPiece (const String& name, const Object& host);
 
 private:
-	void initialize ();
+	virtual void initialize ();
 
 	Parameter<Side> side;
 	Parameter<int> set;
@@ -45,6 +41,13 @@ private:
 
 	Message::Result select (Message&);
 	Message::Result deselect (Message&);
+
+	Message::Result reveal (Message&);
+	enum class Fade { NONE, IN, OUT };
+	bool fade_step ();
+	Parameter<float> max_opacity;
+	Persistent<Fade> fade_state;
+	Transition fade_trans;
 
 	// Movement
 
@@ -76,7 +79,6 @@ private:
 
 	Message::Result force_death (TimerMessage&);
 	Message::Result check_ai_mode (AIModeChangeMessage&);
-	Message::Result check_death_stage (PropertyChangeMessage&);
 	Message::Result die (Message&);
 
 	Message::Result start_burial (TimerMessage&);
@@ -96,6 +98,10 @@ private:
 
 	Message::Result herald_concept (Message&);
 	Object get_heraldry_source ();
+
+	Message::Result subtitle_speech (PropertyChangeMessage&);
+	Message::Result finish_subtitle (TimerMessage&);
+	HUDMessage::Ptr subtitle;
 
 	// "Player"s
 

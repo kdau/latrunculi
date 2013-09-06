@@ -187,7 +187,7 @@ NGCGame::start_game (Message&)
 	state = State::MOVING; // required by finish_move
 	GenericMessage ("FinishMove").send (host (), host ());
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 void
@@ -198,11 +198,8 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 
 	Vector origin_location = origin.get_location (),
 		origin_rotation = origin.get_rotation (),
-		rank_offset, file_offset;
-	rank_offset.x = Parameter<float> (origin, "RankX", 0.0f);
-	rank_offset.y = Parameter<float> (origin, "RankY", 0.0f);
-	file_offset.x = Parameter<float> (origin, "FileX", 0.0f);
-	file_offset.y = Parameter<float> (origin, "FileY", 0.0f);
+		rank_offset = Parameter<Vector> (origin, "rank_offset"),
+		file_offset = Parameter<Vector> (origin, "file_offset");
 
 	for (auto _square = Square::BEGIN; _square.is_valid (); ++_square)
 	{
@@ -213,8 +210,8 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 			+ _square.get_code ());
 
 		Vector location = origin_location
-			+ rank_offset * float (_square.rank)
-			+ file_offset * float (_square.file);
+			+ rank_offset * double (_square.rank)
+			+ file_offset * double (_square.file);
 		square.set_position (location, origin_rotation);
 
 		Piece _piece = game->get_piece_at (_square);
@@ -232,7 +229,7 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 		archetype_name << "ChessProxy" << _piece.get_code ();
 	else
 		archetype_name << "ChessPiece" << _piece.get_code ()
-			<< get_chess_set (_piece.side); //FIXME
+			<< ChessSet (_piece.side).number;
 
 	Object archetype (archetype_name.str ());
 	if (archetype == Object::NONE)
@@ -247,7 +244,8 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 	else if (_piece.side == Side::BLACK)
 		piece.add_metaprop (Object ("M-ChessBlack"));
 
-	piece.add_metaprop (Object ("M-ChessAlive"));
+	if (!proxy)
+		piece.add_metaprop (Object ("M-ChessAlive"));
 
 	Link::create ("Population", square, piece);
 
@@ -255,7 +253,7 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 		place_proxy (piece, square);
 	else if (start_positioned)
 	{
-		GenericMessage ("FadeIn").send (host (), piece); //FIXME
+		GenericMessage ("Reveal").send (host (), piece);
 
 		GenericMessage::with_data ("Reposition", nullptr, true)
 			.send (host (), piece);
@@ -322,33 +320,24 @@ NGCGame::update_interface ()
 		game->is_third_repetition ());
 	bool can_exit = state == State::NONE && !have_ongoing_game;
 
-	Object transparent ("M-Transparent");
 	for (auto& flag : ScriptParamsLink::get_all_by_data
 				(host (), "ResignFlag")) //FIXME per side
-	{
-		if (can_resign && !can_draw)
-			flag.get_dest ().remove_metaprop (transparent);
-		else
-			flag.get_dest ().add_metaprop (transparent, false); //FIXME Why not single?
-	}
+		Rendered (flag.get_dest ()).render_type =
+			(can_resign && !can_draw)
+				? Rendered::RenderType::NORMAL
+				: Rendered::RenderType::NONE;
 
 	for (auto& flag : ScriptParamsLink::get_all_by_data
 				(host (), "DrawFlag")) //FIXME per side
-	{
-		if (can_draw)
-			flag.get_dest ().remove_metaprop (transparent);
-		else
-			flag.get_dest ().add_metaprop (transparent, false); //FIXME Why not single?
-	}
+		Rendered (flag.get_dest ()).render_type = can_draw
+			? Rendered::RenderType::NORMAL
+			: Rendered::RenderType::NONE;
 
 	for (auto& flag : ScriptParamsLink::get_all_by_data
 				(host (), "ExitFlag")) //FIXME per side
-	{
-		if (can_exit)
-			flag.get_dest ().remove_metaprop (transparent);
-		else
-			flag.get_dest ().add_metaprop (transparent, false); //FIXME Why not single?
-	}
+		Rendered (flag.get_dest ()).render_type = can_exit
+			? Rendered::RenderType::NORMAL
+			: Rendered::RenderType::NONE;
 
 	if (!game) return;
 
@@ -363,10 +352,10 @@ NGCGame::update_interface ()
 		bool is_friendly = state == State::INTERACTIVE &&
 			piece.side == game->get_active_side ();
 		GenericMessage::with_data ("UpdateState",
-			can_move ? SquareState::CAN_MOVE_FROM :
-				is_friendly ? SquareState::FRIENDLY_INERT :
-					SquareState::INACTIVE,
-			String (1u, piece.get_code ())).send (host (), square);
+			can_move ? NGCSquare::State::CAN_MOVE_FROM :
+				is_friendly ? NGCSquare::State::FRIENDLY_INERT :
+					NGCSquare::State::EMPTY,
+			piece).send (host (), square);
 	}
 }
 
@@ -382,7 +371,7 @@ NGCGame::tick_tock (TimerMessage& message)
 	for (auto& clock : ScriptParamsLink::get_all_by_data (host (), "Clock"))
 		GenericMessage ("TickTock").send (host (), clock.get_dest ());
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 
@@ -400,7 +389,7 @@ NGCGame::select_from (Message& message)
 	ScriptParamsLink::create (host (), from, "SelectedSquare");
 	GenericMessage ("Select").send (host (), from);
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -422,7 +411,7 @@ NGCGame::select_to (Message& message)
 	}
 
 	start_move (move, false);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 void
@@ -468,7 +457,7 @@ NGCGame::halt_computing (TimerMessage&)
 	try { if (engine) engine->stop_calculation (); }
 	CATCH_ENGINE_FAILURE ("halt_computing",)
 	// The next check_engine cycle will pick up the move.
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -482,7 +471,7 @@ NGCGame::check_engine (TimerMessage&)
 	if (state == State::COMPUTING && !engine->is_calculating ())
 		finish_computing ();
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 void
@@ -559,11 +548,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		Object captured_proxy =
 			get_piece_at (capture->get_captured_square (), true);
 		if (captured_proxy != Object::NONE)
-		{
-			Link::get_one ("~Population", captured_proxy).destroy ();
-			GenericMessage ("FadeAway").send
-				(host (), captured_proxy); //FIXME
-		}
+			captured_proxy.destroy ();
 
 		// Increment the pieces-taken statistics.
 		QuestVar statistic ((move->get_side () == side)
@@ -617,20 +602,19 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		GenericMessage::with_data ("GoToSquare", to).send
 			(host (), piece);
 
-	Piece _promotion = move->get_promoted_piece ();
-	if (_promotion.is_valid ())
+	Piece promoted_piece = move->get_promoted_piece ();
+	if (promoted_piece.is_valid ())
 	{
 		ScriptParamsLink::create (to, piece, "ExPopulation");
 		Link::get_one ("Population", to, piece).destroy ();
-		Object promotion = create_piece (to, _promotion, false);
+		Object promotion = create_piece (to, promoted_piece, false);
 		GenericMessage::with_data ("BePromoted", promotion).send
 			(host (), piece);
 
 		if (piece_proxy != Object::NONE && to_proxy != Object::NONE)
 		{
-			Link::get_one ("~Population", piece_proxy).destroy ();
-			GenericMessage ("FadeAway").send (host (), piece_proxy); //FIXME
-			create_piece (to_proxy, _promotion, true, true);
+			piece_proxy.destroy ();
+			create_piece (to_proxy, promoted_piece, true, true);
 		}
 	}
 
@@ -656,11 +640,11 @@ NGCGame::finish_move (Message&)
 		update_interface ();
 	}
 
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 void
-NGCGame::place_proxy (Object& proxy, const Object& square)
+NGCGame::place_proxy (Rendered proxy, const Object& square)
 {
 	if (proxy == Object::NONE || square == Object::NONE) return;
 	Parameter<Side> proxy_side (proxy, "chess_side", { Side::NONE });
@@ -668,9 +652,9 @@ NGCGame::place_proxy (Object& proxy, const Object& square)
 	Link::get_one ("~Population", proxy).destroy ();
 	Link::create ("Population", square, proxy);
 
-	static const float SCALE_Z = 0.07f; //FIXME Try reading the property again.
 	Vector location = square.get_location ();
-	location.z += Parameter<float> (proxy, "height", 0.0f) / 2.0f * SCALE_Z;
+	location.z += Parameter<float> (proxy, "height", 0.0f) / 2.0f
+		* Vector (proxy.model_scale).z;
 
 	Vector rotation = { 0.0f, 0.0f, 180.0f };
 	// Proxy boards are mirror images of real boards, so subtract.
@@ -694,7 +678,7 @@ NGCGame::record_resignation (Message&)
 		start_endgame ();
 	}
 	CATCH_SCRIPT_FAILURE ("record_resignation",)
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -709,7 +693,7 @@ NGCGame::record_time_control (Message& message)
 		start_endgame ();
 	}
 	CATCH_SCRIPT_FAILURE ("record_time_control",)
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 Message::Result
@@ -728,7 +712,7 @@ NGCGame::record_draw (Message&)
 		start_endgame ();
 	}
 	CATCH_SCRIPT_FAILURE ("record_draw",)
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 void
@@ -798,7 +782,7 @@ NGCGame::finish_endgame (Message& message)
 	objective.set_visible (true);
 	objective.set_state ((objective.number == 0)
 		? Objective::State::COMPLETE : Objective::State::FAILED);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 
@@ -815,7 +799,7 @@ NGCGame::announce_event (const Event::ConstPtr& event)
 		description.front () = std::toupper (description.front ());
 	Mission::show_text (description, std::max (4000ul,
 			Mission::calc_text_duration (description).value),
-		get_chess_set_color (get_chess_set (event->get_side ())));
+		ChessSet (event->get_side ()).get_color ()); //FIXME Use a fancier subtitle.
 
 	if (std::dynamic_pointer_cast<const Draw> (event))
 	{
@@ -911,7 +895,7 @@ NGCGame::show_logbook (Message& message)
 
 	if (!book.book_art.exists ()) book.book_art = "pbook";
 	Mission::show_book ("logbook", book.book_art, true);
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 
 void
@@ -981,6 +965,6 @@ NGCGame::early_engine_failure (TimerMessage& message)
 	// This timer is only set from the initialize method.
 	engine_failure ("initialize",
 		message.get_data (Message::DATA1, String ()));
-	return Message::CONTINUE;
+	return Message::HALT;
 }
 

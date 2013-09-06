@@ -51,8 +51,10 @@ typedef String MLAN;
 // Square (File, Rank)
 
 enum class File : char { NONE = -1, A, B, C, D, E, F, G, H, _COUNT };
+static constexpr size_t N_FILES = size_t (File::_COUNT);
 
 enum class Rank : char { NONE = -1, R1, R2, R3, R4, R5, R6, R7, R8, _COUNT };
+static constexpr size_t N_RANKS = size_t (File::_COUNT);
 
 struct Square
 {
@@ -75,7 +77,7 @@ struct Square
 	Square offset (Delta) const;
 
 	static const Square BEGIN;
-	static const size_t COUNT;
+	static constexpr size_t COUNT = N_RANKS * N_FILES;
 	Square& operator ++ ();
 
 	void clear ();
@@ -125,6 +127,7 @@ struct Piece
 		PAWN,
 		_COUNT
 	};
+	static constexpr size_t N_TYPES = size_t (Type::_COUNT);
 
 	Piece ();
 	Piece (Side, Type);
@@ -396,6 +399,29 @@ private:
 	Piece rook_piece;
 	Square rook_from;
 	Square rook_to;
+};
+
+
+
+// Check: unofficial (not in history) event type for downstream use
+
+class Check : public Event
+{
+public:
+	explicit Check (Side);
+
+	virtual MLAN serialize () const;
+
+	virtual Side get_side () const;
+
+	virtual String get_description () const;
+	virtual String get_concept () const;
+
+protected:
+	virtual bool equals (const Event&) const;
+
+private:
+	Side side;
 };
 
 

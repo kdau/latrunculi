@@ -86,14 +86,13 @@ Position::Position (std::istream& fen)
 
 	std::noskipws (fen); // extract by character
 
-	char rank = char (Rank::_COUNT) - 1; // FEN is backwards rank-wise
-	char file = 0;
+	size_t rank = N_RANKS, file = 0u; // FEN is backwards rank-wise
 	while (fen >> c)
 	{
-		if (file == char (File::_COUNT))
+		if (file == N_FILES)
 		{
-			file = 0;
-			if (--rank == -1)
+			file = 0u;
+			if (--rank == 0u)
 			{
 				FEN_EXPECT_CHAR (' ',
 					"expected end of piece placement")
@@ -105,19 +104,18 @@ Position::Position (std::istream& fen)
 		}
 		else if (Piece (c).is_valid ())
 		{
-			board [size_t (rank)] [size_t (file++)] = c;
+			board [rank-1] [file++] = c;
 		}
-		else if (c >= '1' && c <= '8' - file)
+		else if (c >= '1' && c <= '8' - char (file))
 		{
-			char blank_count = c - '0';
+			size_t blank_count = c - '0';
 			while (blank_count--)
-				board [size_t (rank)] [size_t (file++)]
-					= Piece::NONE_CODE;
+				board [rank-1] [file++] = Piece::NONE_CODE;
 		}
 		else
 			FEN_THROW_INVALID ("malformed piece placement");
 	}
-	if (rank != -1) FEN_THROW_INVALID ("incomplete piece placement");
+	if (rank != 0u) FEN_THROW_INVALID ("incomplete piece placement");
 
 	bool got_side = false;
 	while (fen >> c)
@@ -185,22 +183,23 @@ void
 Position::serialize (std::ostream& fen) const
 {
 	// FEN is backwards, rank-wise.
-	for (char rank = char (Rank::_COUNT) - 1; rank >= 0; --rank)
+	size_t rank = N_RANKS - 1u;
+	do
 	{
-		char file = 0;
-		while (file < char (File::_COUNT))
+		size_t file = 0u;
+		while (file < N_FILES)
 		{
-			char blank_count = 0;
-			while (board [size_t (rank)] [size_t (file)]
-					== Piece::NONE_CODE &&
-				++blank_count && ++file < char (File::_COUNT));
-			if (blank_count > 0)
+			size_t blank_count = 0u;
+			while (board [rank] [file] == Piece::NONE_CODE &&
+				++blank_count && ++file < N_FILES);
+			if (blank_count != 0u)
 				fen << blank_count;
-			if (file < char (File::_COUNT))
-				fen << board [size_t (rank)] [size_t (file++)];
+			if (file < N_FILES)
+				fen << board [rank] [file++];
 		}
-		if (rank > 0) fen << '/'; // don't delimit the last one
+		if (rank != 0u) fen << '/'; // don't delimit the last one
 	}
+	while (rank-- != 0u);
 
 	fen << ' ' << active_side.get_code ();
 
@@ -373,16 +372,16 @@ Position::make_move (const Move::Ptr& move)
 	Piece piece = move->get_piece ();
 	Piece::Type orig_type = piece.type;
 	if (move->get_promoted_piece ().is_valid ())
-		piece.type = move->get_promotion ();
-
-	// Move the piece.
-	(*this) [move->get_from ()] = Piece::NONE_CODE;
-	(*this) [move->get_to ()] = piece.get_code ();
+		piece = move->get_promoted_piece ();
 
 	// Clear any captured square.
 	auto capture = std::dynamic_pointer_cast<const Capture> (move);
 	if (capture)
 		(*this) [capture->get_captured_square ()] = Piece::NONE_CODE;
+
+	// Move the piece.
+	(*this) [move->get_from ()] = Piece::NONE_CODE;
+	(*this) [move->get_to ()] = piece.get_code ();
 
 	// Move any castling rook.
 	if (auto castling = std::dynamic_pointer_cast<const Castling> (move))
@@ -888,49 +887,6 @@ Game::confirm_possible_move (const Move::Ptr& move)
 
 	possible_moves.push_back (move);
 	return true;
-}
-
-
-
-// Check
-
-Check::Check (Side _side)
-	: side (_side)
-{
-	if (!side.is_valid ())
-		invalidate ();
-}
-
-Side
-Check::get_side () const
-{
-	return side;
-}
-
-MLAN
-Check::serialize () const
-{
-	return String ();
-}
-
-bool
-Check::equals (const Event& _rhs) const
-{
-	auto& rhs = dynamic_cast<const Check&> (_rhs);
-	return side == rhs.side;
-}
-
-String
-Check::get_description () const
-{
-	return translate_format ("in_check",
-		side.get_name (Case::NOMINATIVE).data ());
-}
-
-String
-Check::get_concept () const
-{
-	return "check";
 }
 
 

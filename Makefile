@@ -37,6 +37,6 @@ include $(THIEFLIBDIR)/module.mk
 $(bindir2)/ChessGame.hh: Chess.hh
 $(bindir2)/ChessEngine.hh: Chess.hh ChessGame.hh
 $(bindir2)/NGC.o: Chess.hh
-$(bindir2)/NGCGame.o: Chess.hh ChessGame.hh ChessEngine.hh
-$(bindir2)/NGCPiece.o: Chess.hh
+$(bindir2)/NGCGame.o: Chess.hh NGC.hh ChessGame.hh ChessEngine.hh
+$(bindir2)/NGCPiece.o: Chess.hh NGC.hh
 

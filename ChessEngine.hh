@@ -65,7 +65,7 @@ private:
 
 	Thief::Difficulty difficulty;
 	String best_move;
-	bool started, calculating;
+	bool debug, started, calculating;
 };
 
 } // namespace Chess
