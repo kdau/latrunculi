@@ -28,6 +28,15 @@ using namespace Thief;
 using namespace Chess;
 
 
+// Team: separation of Side (white vs. black) from player (good) vs. engine (bad)
+
+typedef Being::Team Team;
+
+Team get_chess_team (Side);
+Side get_chess_side (Team);
+int get_facing_direction (Side);
+
+
 
 // ChessSet: wrapper for identifying and accessing chess sets in the gamesys.
 
@@ -35,6 +44,9 @@ struct ChessSet
 {
 	ChessSet (int number);
 	int number;
+
+	ChessSet (Team);
+	Team get_team () const;
 
 	ChessSet (Side);
 	Side get_side () const;

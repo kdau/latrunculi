@@ -41,6 +41,35 @@ translate (const String& _msgid, Side side)
 
 
 
+// Team
+
+Team
+get_chess_team (Side side)
+{
+	return (QuestVar ("good_side").get () == side.value)
+		? Team::GOOD : Team::BAD_1;
+}
+
+Side
+get_chess_side (Team team)
+{
+	Side good = Side::Value (QuestVar ("good_side").get ());
+	switch (team)
+	{
+	case Team::GOOD: return good;
+	case Team::BAD_1: return good.get_opponent ();
+	default: return Side::NONE;
+	}
+}
+
+int
+get_facing_direction (Side side)
+{
+	return side.get_facing_direction () *
+		((QuestVar ("good_side").get () == 0) ? 1 : -1);
+}
+
+
 
 // ChessSet
 
@@ -48,20 +77,31 @@ ChessSet::ChessSet (int _number)
 	: number (_number)
 {}
 
-ChessSet::ChessSet (Side side) //FIXME Chess sets are no longer white/black but player/opponent.
-	: number (side.is_valid ()
-		? QuestVar (String ("chess_set_") + side.get_code ()).get ()
-		: 0)
+ChessSet::ChessSet (Team team)
+	: number (QuestVar (team == Team::GOOD
+		? "chess_set_good" : "chess_set_evil").get ())
+{}
+
+Team
+ChessSet::get_team () const
+{
+	if (QuestVar ("chess_set_good").get () == number)
+		return Team::GOOD;
+	else if (QuestVar ("chess_set_evil").get () == number)
+		return Team::BAD_1;
+	else
+		return Team::NEUTRAL;
+}
+
+ChessSet::ChessSet (Side side)
+	: number (QuestVar (get_chess_team (side) == Team::GOOD
+		? "chess_set_good" : "chess_set_evil").get ())
 {}
 
 Side
 ChessSet::get_side () const
 {
-	for (Side side : { Side::WHITE, Side::BLACK })
-		if (QuestVar (String ("chess_set_") + side.get_code ()).get ()
-		    == number)
-			return side;
-	return Side::NONE;
+	return get_chess_side (get_team ());
 }
 
 Object
@@ -646,7 +686,7 @@ NGCSquare::update_decal ()
 
 	Vector location = host ().get_location () + decal_offset,
 		rotation (0.0f, 0.0f, 180.0f + 90.0f *
-			display_piece.side.get_facing_direction ());
+			get_facing_direction (display_piece.side));
 	decal.set_position (location, rotation);
 
 	std::ostringstream texture;
@@ -688,7 +728,7 @@ NGCSquare::update_button ()
 	switch (state)
 	{
 	case State::CAN_MOVE_FROM:
-		rotation.z = 180.0f + 90.0f * side.get_facing_direction ();
+		rotation.z = 180.0f + 90.0f * get_facing_direction (side);
 		break;
 	case State::CAN_MOVE_TO:
 		side = side.get_opponent ();

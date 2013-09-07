@@ -31,7 +31,7 @@ public:
 private:
 	virtual void initialize ();
 
-	Parameter<Side> side;
+	Parameter<Team> team;
 	Parameter<int> set;
 
 	void tell_game (const char* message);

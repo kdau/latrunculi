@@ -32,7 +32,7 @@ NGCGame::NGCGame (const String& _name, const Object& _host)
 	: Script (_name, _host),
 	  game (nullptr), engine (nullptr),
 	  PERSISTENT_ (record),
-	  PARAMETER_ (player_side, "chess_side", Side::NONE),
+	  PARAMETER_ (good_side, "good_side", Side::NONE),
 	  PERSISTENT (state, State::NONE)
 {
 	listen_message ("PostSim", &NGCGame::start_game);
@@ -104,13 +104,11 @@ NGCGame::get_piece_at (const Object& square)
 void
 NGCGame::initialize ()
 {
-	if (player_side == Side::NONE)
-	{
-		player_side = Side::Value (Thief::Engine::random_int
+	if (good_side == Side::NONE)
+		good_side = Side::Value (Thief::Engine::random_int
 			(Side::WHITE, Side::BLACK));
-		QuestVar ("player_side").set (player_side->value);
-	}
 
+	bool resume_computing = false;
 	if (record.exists ()) // existing game
 	{
 		std::istringstream _record (record);
@@ -119,6 +117,8 @@ NGCGame::initialize ()
 
 		if (game->get_result () != Game::Result::ONGOING)
 			return; // Don't start the engine at all.
+		else if (state == State::COMPUTING)
+			resume_computing = true;
 		else if (state == State::NONE) // ???
 			state = State::INTERACTIVE;
 	}
@@ -126,7 +126,7 @@ NGCGame::initialize ()
 	{
 		game = new Game ();
 		update_record ();
-		// Remainder of preparations will occur in post-Sim.
+		// Remainder of preparations will occur post-Sim.
 	}
 
 	try
@@ -146,16 +146,16 @@ NGCGame::initialize ()
 
 		engine->set_difficulty (Mission::get_difficulty ());
 		engine->start_game (game);
+
+		if (resume_computing)
+			start_computing ();
 	}
 	catch (std::exception& e)
 	{
 		engine = nullptr;
 		start_timer ("EarlyEngineFailure", 10ul, false,
-			String (e.what ())); //FIXME pre-Sim clean?
+			String (e.what ()));
 	}
-
-	if (state == State::COMPUTING) // need to prompt the engine
-		start_computing (); //FIXME pre-Sim clean?
 }
 
 Message::Result
@@ -163,7 +163,23 @@ NGCGame::start_game (Message&)
 {
 	if (!game) return Message::ERROR;
 
-	//FIXME What needs to be done in the side == BLACK case?
+	QuestVar ("good_side").set (good_side->value);
+
+	Object good_mp ((good_side == Side::WHITE)
+		? "M-ChessWhite" : "M-ChessBlack");
+	Object evil_mp ((good_side == Side::BLACK)
+		? "M-ChessWhite" : "M-ChessBlack");
+	for (auto& link : ScriptParamsLink::get_all (host ()))
+	{
+		Parameter<Team> team (link.get_dest (), "chess_team",
+			{ Team::NEUTRAL });
+		switch (team)
+		{
+		case Team::GOOD: link.get_dest ().add_metaprop (good_mp); break;
+		case Team::BAD_1: link.get_dest ().add_metaprop (evil_mp); break;
+		default: break;
+		}
+	}
 
 	Object board_origin ("BoardOrigin");
 	if (board_origin != Object::NONE)
@@ -189,11 +205,8 @@ NGCGame::start_game (Message&)
 	// Prepare for the "next" (first) move. If playing as black, delay it
 	// until after the opening herald announcements.
 	state = State::MOVING; // required by finish_move
-	if (player_side == Side::WHITE)
-		GenericMessage ("FinishMove").send (host (), host ());
-	else // Side::BLACK
-		GenericMessage ("FinishMove").schedule (host (), host (),
-			13250ul, false);
+	GenericMessage ("FinishMove").schedule (host (), host (),
+		(good_side == Side::WHITE) ? 250ul : 13250ul, false);
 
 	return Message::HALT;
 }
@@ -209,6 +222,8 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 		rank_offset = Parameter<Vector> (origin, "rank_offset"),
 		file_offset = Parameter<Vector> (origin, "file_offset");
 
+	bool reversed_board = (good_side == Side::BLACK);
+
 	for (auto _square = Square::BEGIN; _square.is_valid (); ++_square)
 	{
 		Object square = Object::create (archetype);
@@ -222,9 +237,15 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 		square.set_name ((proxy ? "Proxy" : "Square")
 			+ _square.get_code ());
 
+		double rank = reversed_board
+			? (N_RANKS - size_t (_square.rank) - 1u)
+			: size_t (_square.rank);
+		double file = reversed_board
+			? (N_FILES - size_t (_square.file) - 1u)
+			: size_t (_square.file);
+
 		Vector location = origin_location
-			+ rank_offset * double (_square.rank)
-			+ file_offset * double (_square.file);
+			+ rank_offset * rank + file_offset * file;
 		square.set_position (location, origin_rotation);
 
 		Piece _piece = game->get_piece_at (_square);
@@ -254,6 +275,11 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 		mono () << "Error: could not create a piece." << std::endl;
 		return Object::NONE;
 	}
+
+	if (_piece.side == good_side)
+		piece.add_metaprop (Object ("M-ChessGood"));
+	else if (_piece.side == good_side->get_opponent ())
+		piece.add_metaprop (Object ("M-ChessEvil"));
 
 	if (_piece.side == Side::WHITE)
 		piece.add_metaprop (Object ("M-ChessWhite"));
@@ -331,7 +357,7 @@ NGCGame::update_interface ()
 	bool have_ongoing_game =
 		game && game->get_result () == Game::Result::ONGOING;
 	bool can_resign = state == State::INTERACTIVE && have_ongoing_game &&
-		game->get_active_side () == player_side;
+		game->get_active_side () == good_side;
 	bool can_draw = can_resign && (game->get_fifty_move_clock () >= 50u ||
 		game->is_third_repetition ());
 	bool can_exit = state == State::NONE && !have_ongoing_game;
@@ -507,7 +533,7 @@ NGCGame::finish_computing ()
 			try
 			{
 				game->record_loss (Loss::Type::RESIGNATION,
-					player_side->get_opponent ());
+					good_side->get_opponent ());
 				start_endgame ();
 			}
 			CATCH_SCRIPT_FAILURE ("finish_computing",)
@@ -567,7 +593,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 			captured_proxy.destroy ();
 
 		// Increment the pieces-taken statistics.
-		QuestVar statistic ((move->get_side () == player_side)
+		QuestVar statistic ((move->get_side () == good_side)
 			? "stat_enemy_pieces" : "stat_own_pieces");
 		statistic.set (statistic.get () + 1);
 	}
@@ -645,7 +671,7 @@ NGCGame::finish_move (Message&)
 	if (game->get_result () != Game::Result::ONGOING)
 		start_endgame ();
 
-	else if (engine && game->get_active_side () != player_side)
+	else if (engine && game->get_active_side () != good_side)
 		start_computing ();
 
 	else
@@ -674,7 +700,7 @@ NGCGame::place_proxy (Rendered proxy, const Object& square)
 
 	Vector rotation = { 0.0f, 0.0f, 180.0f };
 	// Proxy boards are mirror images of real boards, so subtract.
-	rotation.z -= 90.0f * proxy_side->get_facing_direction ();
+	rotation.z -= 90.0f * get_facing_direction (proxy_side);
 
 	proxy.set_position (location, rotation);
 }
@@ -690,7 +716,7 @@ NGCGame::record_resignation (Message&)
 		return Message::ERROR;
 	try
 	{
-		game->record_loss (Loss::Type::RESIGNATION, player_side);
+		game->record_loss (Loss::Type::RESIGNATION, good_side);
 		start_endgame ();
 	}
 	CATCH_SCRIPT_FAILURE ("record_resignation",)
@@ -704,7 +730,7 @@ NGCGame::record_time_control (Message&)
 		return Message::ERROR;
 	try
 	{
-		game->record_loss (Loss::Type::TIME_CONTROL, player_side);
+		game->record_loss (Loss::Type::TIME_CONTROL, good_side);
 		start_endgame ();
 	}
 	CATCH_SCRIPT_FAILURE ("record_time_control",)
@@ -782,7 +808,7 @@ NGCGame::finish_endgame (Message& message)
 			break;
 		case Loss::Type::CHECKMATE:
 		default:
-			objective.number = (game->get_victor () == player_side)
+			objective.number = (game->get_victor () == good_side)
 				? 0 // checkmate opponent
 				: 1; // keep self out of checkmate
 			break;
@@ -825,13 +851,12 @@ NGCGame::announce_event (const Event::ConstPtr& event)
 	else
 		herald_concept (event->get_side (), event->get_concept ());
 
-	// If it's a Loss, wait for the losing side's heralds and then celebrate
-	// the win. The heralds announce, the pieces dance, and any scripted
-	// victory events (such as fireworks) are played.
+	// If it's a Loss, have the winning side celebrate their victory.
 	if (std::dynamic_pointer_cast<const Loss> (event))
 	{
 		herald_concept (game->get_victor (), "win", 6500ul);
 
+		// Have the winning side's remaining pieces cheer.
 		for (auto square = Square::BEGIN; square.is_valid (); ++square)
 		{
 			Object piece = get_piece_at (square);
@@ -843,7 +868,7 @@ NGCGame::announce_event (const Event::ConstPtr& event)
 					 false);
 		}
 
-
+		// Play any scripted victory events (such as fireworks).
 		for (auto& victory : ScriptParamsLink::get_all_by_data
 					(host (), "Victory"))
 			if (Parameter<Side> (victory.get_dest (), "chess_side",

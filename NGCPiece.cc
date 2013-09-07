@@ -35,7 +35,7 @@ namespace Duration
 
 NGCPiece::NGCPiece (const String& _name, const Object& _host)
 	: Script (_name, _host),
-	  PARAMETER_ (side, "chess_side", Side::NONE),
+	  PARAMETER_ (team, "chess_team", Team::NEUTRAL),
 	  PARAMETER_ (set, "chess_set", 0),
 	  PERSISTENT (game, Object::NONE),
 	  PARAMETER (max_opacity, 1.0f),
@@ -452,7 +452,7 @@ NGCPiece::die (Message&)
 	subtitle.reset ();
 
 	// Ensure that any corpses will bury themselves appropriately.
-	QuestVar ("chess_corpse_side").set (side->value);
+	QuestVar ("chess_corpse_team").set (int (Team (team)));
 
 	// Set timer to do it on ourself, if we are not replaced.
 	start_timer ("StartBurial", Duration::DEATH, false);
@@ -461,10 +461,10 @@ NGCPiece::die (Message&)
 }
 
 Message::Result
-NGCPiece::start_burial (TimerMessage&) //FIXME Choose a grave based on player/opponent instead of white/black.
+NGCPiece::start_burial (TimerMessage&)
 {
-	if (!side->is_valid ())
-		side = Side::Value (QuestVar ("chess_corpse_side").get ());
+	if (team == Team::NEUTRAL)
+		team = Team (QuestVar ("chess_corpse_team").get ());
 
 	// Create a smoke puff at the site of death.
 	Object puff_type = Object ("ChessBurialPuff"),
@@ -472,9 +472,8 @@ NGCPiece::start_burial (TimerMessage&) //FIXME Choose a grave based on player/op
 	puff.set_location (host ().get_location ());
 
 	// Create a smoke puff at the gravesite, if any.
-	String grave_name = "ChessGrave";
-	grave_name += side->get_code ();
-	Object grave = Object (grave_name);
+	Object grave = Object ((team == Team::GOOD)
+		? "ChessGraveGood" : "ChessGraveEvil");
 	if (grave != Object::NONE)
 	{
 		ScriptParamsLink::create (host (), grave, "Grave");
