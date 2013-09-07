@@ -48,7 +48,7 @@ ChessSet::ChessSet (int _number)
 	: number (_number)
 {}
 
-ChessSet::ChessSet (Side side)
+ChessSet::ChessSet (Side side) //FIXME Chess sets are no longer white/black but player/opponent.
 	: number (side.is_valid ()
 		? QuestVar (String ("chess_set_") + side.get_code ()).get ()
 		: 0)
@@ -318,8 +318,7 @@ NGCScenario::NGCScenario (const String& _name, const Object& _host)
 	  disable_trans (*this, &NGCScenario::disable_step, "Disable", 50ul,
 		1000ul, Curve::LINEAR, "fade_time", "fade_curve"),
 	  PARAMETER (mission, 0),
-	  PARAMETER (chess_set_white, 0),
-	  PARAMETER (chess_set_black, 0),
+	  PARAMETER (chess_set, 0),
 	  PERSISTENT (entered, false)
 {
 	listen_message ("FrobWorldEnd", &NGCScenario::select);
@@ -337,7 +336,7 @@ NGCScenario::initialize ()
 		msgid << "title_" << mission;
 		title->set_text (Mission::get_text ("strings", "titles",
 			msgid.str ()));
-		title->set_color (ChessSet (chess_set_white).get_color ()); //FIXME assumes side?
+		title->set_color (ChessSet (chess_set).get_color ());
 	}
 }
 
@@ -413,10 +412,10 @@ NGCScenario::enter_environment (Message&)
 	else
 		entered = true;
 
-	// Close the false wall again.
+	// Close the false wall again, quickly.
 	TranslatingDoor wall = ScriptParamsLink::get_one_by_data
 		(host (), "Wall").get_dest ();
-	wall.base_speed = wall.base_speed * 2.0f;
+	wall.base_speed = wall.base_speed * 3.0f;
 	wall.close_door ();
 
 	// Start the briefing.
@@ -429,16 +428,15 @@ NGCScenario::enter_environment (Message&)
 
 
 
-// NGCClock //FIXME per side
+// NGCClock
 
 NGCClock::NGCClock (const String& _name, const Object& _host)
 	: NGCTitled (_name, _host),
 	  PARAMETER_ (time_control, "clock_time", 0ul),
-	  PARAMETER_ (side, "chess_side", Side::NONE),
+	  PERSISTENT (running, false),
 	  PARAMETER_ (joint, "clock_joint", 0),
 	  PARAMETER_ (joint_low, "clock_low", 0.0f),
-	  PARAMETER_ (joint_high, "clock_high", 0.0f),
-	  PERSISTENT (running, false)
+	  PARAMETER_ (joint_high, "clock_high", 0.0f)
 {
 	listen_message ("TickTock", &NGCClock::tick_tock);
 	listen_message ("StopTheClock", &NGCClock::stop_the_clock);
@@ -477,8 +475,7 @@ NGCClock::tick_tock (Message& message)
 
 		Object game = ScriptParamsLink::get_one_by_data
 			(host (), "Clock", true).get_dest ();
-		GenericMessage::with_data ("TimeControl", Side (side)).send
-			(host (), game);
+		GenericMessage ("TimeControl").send (host (), game);
 	}
 
 	// Update the time display.
@@ -639,7 +636,11 @@ NGCSquare::update_decal ()
 		decal.destroy ();
 
 	decal = Object::create (Object ("ChessDecal"));
-	if (decal == Object::NONE) return; // ???
+	if (decal == Object::NONE)
+	{
+		mono () << "Error: could not create a decal." << std::endl;
+		return;
+	}
 
 	ScriptParamsLink::create (host (), decal, "Decal");
 
@@ -711,11 +712,12 @@ NGCSquare::update_button ()
 
 	std::ostringstream archetype_name;
 	archetype_name << "ChessButton" << ChessSet (side).number;
-	Object archetype (archetype_name.str ());
-	if (archetype == Object::NONE) return; // ???
-
-	button = Object::create (archetype);
-	if (button == Object::NONE) return; // ???
+	button = Object::create (Object (archetype_name.str ()));
+	if (button == Object::NONE)
+	{
+		mono () << "Error: could not create a button." << std::endl;
+		return;
+	}
 
 	ScriptParamsLink::create (host (), button, "Button");
 	Link::create ("ControlDevice", button, host ());
@@ -797,5 +799,36 @@ NGCSquare::on_turn_on (Message&)
 	default:
 		return Message::ERROR;
 	}
+}
+
+
+
+// NGCFireworks
+
+NGCFireworks::NGCFireworks (const String& _name, const Object& _host)
+	: TrapTrigger (_name, _host),
+	  PARAMETER_ (count, "firework_count", 12),
+	  PARAMETER_ (spread, "firework_spread", 300)
+{
+	listen_timer ("LaunchOne", &NGCFireworks::launch_one);
+}
+
+Message::Result
+NGCFireworks::on_trap (bool on, Message&)
+{
+	if (on)
+		for (int i = 0; i < count; ++i)
+			start_timer ("LaunchOne",
+				Engine::random_int (0, count * spread), false);
+	return Message::HALT;
+}
+
+Message::Result
+NGCFireworks::launch_one (TimerMessage&)
+{
+	Projectile::launch (Object ("firearr"), host (), 0.0f,
+		{ Engine::random_float (-20.0f, 20.0f),
+		  Engine::random_float (-20.0f, 20.0f), 40.0f });
+	return Message::HALT;
 }
 

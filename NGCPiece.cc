@@ -60,6 +60,7 @@ NGCPiece::NGCPiece (const String& _name, const Object& _host)
 	listen_message ("GoToSquare", &NGCPiece::go_to_square);
 	listen_message ("ObjActResult", &NGCPiece::arrive_at_square);
 	listen_timer ("BowToKing", &NGCPiece::bow_to_king);
+	listen_message ("Celebrate", &NGCPiece::celebrate);
 
 	listen_message ("AttackPiece", &NGCPiece::start_attack);
 	listen_timer ("MaintainAttack", &NGCPiece::maintain_attack);
@@ -166,10 +167,11 @@ NGCPiece::fade_step ()
 Message::Result
 NGCPiece::reposition (Message& message)
 {
-	auto square = message.get_data (Message::DATA1,
-		Link::get_one ("~Population", host ()).get_dest ());
+	auto square = message.get_data (Message::DATA1, Object ());
 	auto direct = message.get_data (Message::DATA2, false);
 
+	if (!square.exists ())
+		square = Link::get_one ("~Population", host ()).get_dest ();
 	if (square == Object::NONE)
 		return Message::HALT;
 
@@ -183,16 +185,15 @@ NGCPiece::reposition (Message& message)
 
 	Vector distance = target - origin;
 	if (direct || distance.magnitude () < 0.25f)
-	{
 		host ().set_location (target);
-		host_as<AI> ().send_signal ("FaceEnemy");
-	}
 	else
 	{
 		reposition_start = origin;
 		reposition_end = target;
 		reposition_trans.start ();
 	}
+
+	host_as<AI> ().send_signal ("FaceEnemy");
 
 	return Message::HALT;
 }
@@ -203,7 +204,7 @@ NGCPiece::reposition_step ()
 	host ().set_location (reposition_trans.interpolate
 		(reposition_start, reposition_end));
 	if (reposition_trans.is_finished ())
-		host_as<AI> ().send_signal ("FaceEnemy");
+		host_as<AI> ().send_signal ("FaceEnemy"); // just in case
 	return true;
 }
 
@@ -279,6 +280,13 @@ NGCPiece::bow_to_king (TimerMessage&)
 {
 	host_as<AI> ().play_motion ("humsalute3"); // (pseudo-)bipeds only
 	start_timer ("Reposition", 3000ul, false);
+	return Message::HALT;
+}
+
+Message::Result
+NGCPiece::celebrate (Message&)
+{
+	host_as<AI> ().play_motion ("humairpt2"); // (pseudo-)bipeds only
 	return Message::HALT;
 }
 
@@ -427,7 +435,7 @@ NGCPiece::force_death (TimerMessage&)
 }
 
 Message::Result
-NGCPiece::check_ai_mode (AIModeChangeMessage& message)
+NGCPiece::check_ai_mode (AIModeMessage& message)
 {
         if (message.get_new_mode () == AI::Mode::DEAD)
 		die (message);
@@ -453,7 +461,7 @@ NGCPiece::die (Message&)
 }
 
 Message::Result
-NGCPiece::start_burial (TimerMessage&)
+NGCPiece::start_burial (TimerMessage&) //FIXME Choose a grave based on player/opponent instead of white/black.
 {
 	if (!side->is_valid ())
 		side = Side::Value (QuestVar ("chess_corpse_side").get ());
@@ -523,7 +531,8 @@ NGCPiece::start_promotion (Message& message)
 		// The promotion will begin when the piece has arrived/captured.
 		return Message::HALT;
 
-	Object square = Link::get_one ("~Population", host ()).get_dest ();
+	Object square = ScriptParamsLink::get_one_by_data (host (),
+		"ExPopulation", true).get_dest ();
 	if (square != Object::NONE)
 		GenericMessage::with_data ("Reposition", square, true).send
 			(host (), host ());
@@ -589,47 +598,14 @@ NGCPiece::herald_concept (Message& message)
 	// Play the announcement sound (fanfare and/or speech).
 	std::ostringstream tags;
 	tags << "ChessSet set" << set << ", ChessConcept " << concept;
-	SoundSchema::play_by_tags (tags.str (),
-		SoundSchema::Tagged::AT_OBJECT_LOCATION,
-		get_heraldry_source (), Object::NONE, host ());
+	SoundSchema::play_by_tags (tags.str (), SoundSchema::Tagged::ON_OBJECT,
+		host ());
 
 	return Message::HALT;
 }
 
-Object
-NGCPiece::get_heraldry_source () //TODO Replace this with proper attenuation factors on schemas.
-{
-	Object source = ScriptParamsLink::get_one_by_data (host (),
-		"HeraldrySource").get_dest ();
-
-	if (!source.exists ())
-	{
-		source = Object::create (Object ("ambientSound"));
-		if (source == Object::NONE) return source;
-		ScriptParamsLink::create (host (), source, "HeraldrySource");
-	}
-
-	Vector herald_loc = host ().get_location (),
-		player_loc = Player ().get_location ();
-
-	// If the player is out of earshot, dislocate herald sounds toward them.
-	static const float EARSHOT = 25.0f;
-	Vector source_loc = herald_loc;
-	if (player_loc.x < herald_loc.x - EARSHOT)
-		source_loc.x = player_loc.x + EARSHOT;
-	else if (player_loc.x > herald_loc.x + EARSHOT)
-		source_loc.x = player_loc.x - EARSHOT;
-	if (player_loc.y < herald_loc.y - EARSHOT)
-		source_loc.y = player_loc.y + EARSHOT;
-	else if (player_loc.y > herald_loc.y + EARSHOT)
-		source_loc.y = player_loc.y - EARSHOT;
-
-	source.set_location (source_loc);
-	return source;
-}
-
 Message::Result
-NGCPiece::subtitle_speech (PropertyChangeMessage& message)
+NGCPiece::subtitle_speech (PropertyMessage& message)
 {
 	AI ai = host_as<AI> ();
 

@@ -137,7 +137,7 @@ private:
 
 	Message::Result enter_environment (Message&);
 
-	Parameter<int> mission, chess_set_white, chess_set_black;
+	Parameter<int> mission, chess_set;
 	Persistent<bool> entered;
 };
 
@@ -160,12 +160,10 @@ private:
 	void update_display ();
 
 	Parameter<Time> time_control;
-	Parameter<Side> side;
+	Persistent<bool> running;
 
 	Parameter<int> joint;
 	Parameter<float> joint_low, joint_high;
-
-	Persistent<bool> running;
 };
 
 
@@ -222,6 +220,22 @@ private:
 	Message::Result select (Message&);
 	Message::Result deselect (Message&);
 	Message::Result on_turn_on (Message&);
+};
+
+
+
+// NGCFireworks: Creates a fireworks display for victory celebrations.
+
+class NGCFireworks : public TrapTrigger
+{
+public:
+	NGCFireworks (const String& name, const Object& host);
+
+private:
+	virtual Message::Result on_trap (bool on, Message&);
+	Message::Result launch_one (TimerMessage&);
+
+	Parameter<int> count, spread;
 };
 
 

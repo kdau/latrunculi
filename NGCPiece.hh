@@ -61,6 +61,7 @@ private:
 	Persistent<Object> target_square;
 
 	Message::Result bow_to_king (TimerMessage&);
+	Message::Result celebrate (Message&);
 
 	// Combat
 
@@ -78,7 +79,7 @@ private:
 	// Death and burial
 
 	Message::Result force_death (TimerMessage&);
-	Message::Result check_ai_mode (AIModeChangeMessage&);
+	Message::Result check_ai_mode (AIModeMessage&);
 	Message::Result die (Message&);
 
 	Message::Result start_burial (TimerMessage&);
@@ -97,9 +98,7 @@ private:
 	// Heralds
 
 	Message::Result herald_concept (Message&);
-	Object get_heraldry_source ();
-
-	Message::Result subtitle_speech (PropertyChangeMessage&);
+	Message::Result subtitle_speech (PropertyMessage&);
 	Message::Result finish_subtitle (TimerMessage&);
 	HUDMessage::Ptr subtitle;
 

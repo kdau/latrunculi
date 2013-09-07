@@ -32,7 +32,7 @@ NGCGame::NGCGame (const String& _name, const Object& _host)
 	: Script (_name, _host),
 	  game (nullptr), engine (nullptr),
 	  PERSISTENT_ (record),
-	  PARAMETER_ (side, "chess_side", Side::NONE),
+	  PARAMETER_ (player_side, "chess_side", Side::NONE),
 	  PERSISTENT (state, State::NONE)
 {
 	listen_message ("PostSim", &NGCGame::start_game);
@@ -104,9 +104,12 @@ NGCGame::get_piece_at (const Object& square)
 void
 NGCGame::initialize ()
 {
-	if (side == Side::NONE)
-		side = Side::Value (Thief::Engine::random_int
+	if (player_side == Side::NONE)
+	{
+		player_side = Side::Value (Thief::Engine::random_int
 			(Side::WHITE, Side::BLACK));
+		QuestVar ("player_side").set (player_side->value);
+	}
 
 	if (record.exists ()) // existing game
 	{
@@ -179,13 +182,18 @@ NGCGame::start_game (Message&)
 	start_timer ("TickTock", 1000ul, true);
 	start_timer ("CheckEngine", 250ul, true);
 
-	// Announce the beginning of the game. //FIXME assumes side?
+	// Announce the beginning of the game.
 	herald_concept (Side::WHITE, "begin", 250ul);
 	herald_concept (Side::BLACK, "begin", 6750ul);
 
-	// Prepare for the "next" (first) move.
+	// Prepare for the "next" (first) move. If playing as black, delay it
+	// until after the opening herald announcements.
 	state = State::MOVING; // required by finish_move
-	GenericMessage ("FinishMove").send (host (), host ());
+	if (player_side == Side::WHITE)
+		GenericMessage ("FinishMove").send (host (), host ());
+	else // Side::BLACK
+		GenericMessage ("FinishMove").schedule (host (), host (),
+			13250ul, false);
 
 	return Message::HALT;
 }
@@ -204,7 +212,12 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 	for (auto _square = Square::BEGIN; _square.is_valid (); ++_square)
 	{
 		Object square = Object::create (archetype);
-		if (square == Object::NONE) continue; // ???
+		if (square == Object::NONE)
+		{
+			mono () << "Error: could not create a square."
+				<< std::endl;
+			continue;
+		}
 
 		square.set_name ((proxy ? "Proxy" : "Square")
 			+ _square.get_code ());
@@ -237,7 +250,10 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 
 	AI piece = Object::create (archetype);
 	if (piece == Object::NONE)
-		return Object::NONE; // ???
+	{
+		mono () << "Error: could not create a piece." << std::endl;
+		return Object::NONE;
+	}
 
 	if (_piece.side == Side::WHITE)
 		piece.add_metaprop (Object ("M-ChessWhite"));
@@ -315,26 +331,26 @@ NGCGame::update_interface ()
 	bool have_ongoing_game =
 		game && game->get_result () == Game::Result::ONGOING;
 	bool can_resign = state == State::INTERACTIVE && have_ongoing_game &&
-		game->get_active_side () == side;
+		game->get_active_side () == player_side;
 	bool can_draw = can_resign && (game->get_fifty_move_clock () >= 50u ||
 		game->is_third_repetition ());
 	bool can_exit = state == State::NONE && !have_ongoing_game;
 
 	for (auto& flag : ScriptParamsLink::get_all_by_data
-				(host (), "ResignFlag")) //FIXME per side
+				(host (), "ResignFlag"))
 		Rendered (flag.get_dest ()).render_type =
 			(can_resign && !can_draw)
 				? Rendered::RenderType::NORMAL
 				: Rendered::RenderType::NONE;
 
 	for (auto& flag : ScriptParamsLink::get_all_by_data
-				(host (), "DrawFlag")) //FIXME per side
+				(host (), "DrawFlag"))
 		Rendered (flag.get_dest ()).render_type = can_draw
 			? Rendered::RenderType::NORMAL
 			: Rendered::RenderType::NONE;
 
 	for (auto& flag : ScriptParamsLink::get_all_by_data
-				(host (), "ExitFlag")) //FIXME per side
+				(host (), "ExitFlag"))
 		Rendered (flag.get_dest ()).render_type = can_exit
 			? Rendered::RenderType::NORMAL
 			: Rendered::RenderType::NONE;
@@ -491,7 +507,7 @@ NGCGame::finish_computing ()
 			try
 			{
 				game->record_loss (Loss::Type::RESIGNATION,
-					side->get_opponent ());
+					player_side->get_opponent ());
 				start_endgame ();
 			}
 			CATCH_SCRIPT_FAILURE ("finish_computing",)
@@ -551,7 +567,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 			captured_proxy.destroy ();
 
 		// Increment the pieces-taken statistics.
-		QuestVar statistic ((move->get_side () == side)
+		QuestVar statistic ((move->get_side () == player_side)
 			? "stat_enemy_pieces" : "stat_own_pieces");
 		statistic.set (statistic.get () + 1);
 	}
@@ -629,7 +645,7 @@ NGCGame::finish_move (Message&)
 	if (game->get_result () != Game::Result::ONGOING)
 		start_endgame ();
 
-	else if (engine && game->get_active_side () != side)
+	else if (engine && game->get_active_side () != player_side)
 		start_computing ();
 
 	else
@@ -674,7 +690,7 @@ NGCGame::record_resignation (Message&)
 		return Message::ERROR;
 	try
 	{
-		game->record_loss (Loss::Type::RESIGNATION, side);
+		game->record_loss (Loss::Type::RESIGNATION, player_side);
 		start_endgame ();
 	}
 	CATCH_SCRIPT_FAILURE ("record_resignation",)
@@ -682,14 +698,13 @@ NGCGame::record_resignation (Message&)
 }
 
 Message::Result
-NGCGame::record_time_control (Message& message)
+NGCGame::record_time_control (Message&)
 {
 	if (!game || game->get_result () != Game::Result::ONGOING)
 		return Message::ERROR;
 	try
 	{
-		game->record_loss (Loss::Type::TIME_CONTROL,
-			message.get_data (Message::DATA1, Side::NONE));
+		game->record_loss (Loss::Type::TIME_CONTROL, player_side);
 		start_endgame ();
 	}
 	CATCH_SCRIPT_FAILURE ("record_time_control",)
@@ -734,9 +749,11 @@ NGCGame::start_endgame ()
 	update_sim ();
 	update_interface ();
 
+	// Stop the clocks.
 	for (auto& clock : ScriptParamsLink::get_all_by_data (host (), "Clock"))
 		GenericMessage ("StopTheClock").send (host (), clock.get_dest ());
 
+	// Have the heralds announce the result.
 	announce_event (game->get_last_event ());
 }
 
@@ -757,19 +774,18 @@ NGCGame::finish_endgame (Message& message)
 	case Game::Result::WON:
 		switch (loss ? loss->get_type () : Loss::Type::NONE)
 		{
-		case Loss::Type::CHECKMATE:
-			objective.number = (game->get_victor () == side)
-				? 0 // checkmate opponent
-				: 1; // keep self out of checkmate
-			break;
 		case Loss::Type::RESIGNATION:
 			objective.number = 3; // don't resign
 			break;
 		case Loss::Type::TIME_CONTROL:
 			objective.number = 2; // don't run out of time
 			break;
+		case Loss::Type::CHECKMATE:
 		default:
-			return Message::ERROR; // ???
+			objective.number = (game->get_victor () == player_side)
+				? 0 // checkmate opponent
+				: 1; // keep self out of checkmate
+			break;
 		}
 		break;
 	case Game::Result::DRAWN:
@@ -801,31 +817,50 @@ NGCGame::announce_event (const Event::ConstPtr& event)
 			Mission::calc_text_duration (description).value),
 		ChessSet (event->get_side ()).get_color ()); //FIXME Use a fancier subtitle.
 
-	if (std::dynamic_pointer_cast<const Draw> (event))
+	if (event->get_side () == Side::NONE)
 	{
-		// Can't be simultaneous, as the lines may vary. //FIXME assumes side?
-		herald_concept (Side::WHITE, event->get_concept (), 0ul);
-		herald_concept (Side::BLACK, event->get_concept (),
-			6500ul);
+		herald_concept (Side::WHITE, event->get_concept ());
+		herald_concept (Side::BLACK, event->get_concept (), 6500ul);
 	}
 	else
-	{
 		herald_concept (event->get_side (), event->get_concept ());
 
-		// If it's a Loss, announce the opposing side's win.
-		if (std::dynamic_pointer_cast<const Loss> (event))
-			herald_concept (game->get_victor (), "win", 6500ul);
+	// If it's a Loss, wait for the losing side's heralds and then celebrate
+	// the win. The heralds announce, the pieces dance, and any scripted
+	// victory events (such as fireworks) are played.
+	if (std::dynamic_pointer_cast<const Loss> (event))
+	{
+		herald_concept (game->get_victor (), "win", 6500ul);
+
+		for (auto square = Square::BEGIN; square.is_valid (); ++square)
+		{
+			Object piece = get_piece_at (square);
+			if (game->get_piece_at (square).side ==
+			    game->get_victor () && piece != Object::NONE)
+				GenericMessage ("Celebrate").schedule
+					(host (), piece,
+					 Thief::Engine::random_int (6000, 7000),
+					 false);
+		}
+
+
+		for (auto& victory : ScriptParamsLink::get_all_by_data
+					(host (), "Victory"))
+			if (Parameter<Side> (victory.get_dest (), "chess_side",
+			    { Side::NONE }) == game->get_victor ())
+				GenericMessage ("TurnOn").schedule (host (),
+					victory.get_dest (), 12000ul, false);
 	}
 }
 
 void
-NGCGame::herald_concept (Side _side, const String& concept, Time delay)
+NGCGame::herald_concept (Side side, const String& concept, Time delay)
 {
 	for (auto& _herald : ScriptParamsLink::get_all_by_data
 				(host (), "Herald"))
 	{
 		Object herald = _herald.get_dest ();
-		if (_side == Side::NONE || _side ==
+		if (side == Side::NONE || side ==
 		    Parameter<Side> (herald, "chess_side", { Side::NONE }))
 			GenericMessage::with_data ("HeraldConcept", concept)
 				.schedule (host (), herald, delay, false);
@@ -916,7 +951,7 @@ NGCGame::engine_failure (const String& where, const String& what)
 	// Inform the player that both sides will be interactive.
 	Mission::show_book ("engine-problem", "parch");
 
-	// Eliminate objects associated with the computer opponent. //FIXME per side
+	// Eliminate objects associated with the computer opponent.
 	for (auto& fence : ScriptParamsLink::get_all_by_data
 			(host (), "OpponentFence"))
 		fence.get_dest ().destroy ();

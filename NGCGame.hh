@@ -98,7 +98,7 @@ private:
 	Chess::Engine* engine;
 
 	Persistent<String> record;
-	Parameter<Side> side;
+	Parameter<Side> player_side;
 
 	enum class State
 	{
