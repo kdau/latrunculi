@@ -403,7 +403,23 @@ private:
 
 
 
-// Check: unofficial (not in history) event type for downstream use
+// StartGame and Check: unofficial (not in history) events for downstream use
+
+class StartGame : public Event
+{
+public:
+	StartGame ();
+
+	virtual MLAN serialize () const;
+
+	virtual Side get_side () const;
+
+	virtual String get_description () const;
+	virtual String get_concept () const;
+
+protected:
+	virtual bool equals (const Event&) const;
+};
 
 class Check : public Event
 {

@@ -635,8 +635,11 @@ NGCPiece::subtitle_speech (PropertyMessage& message)
 		: Mission::calc_text_duration (text, 700ul);
 
 	// Start the subtitle and schedule its end.
-	subtitle.reset (new HUDMessage (ai, text, ChessSet (set).get_color ()));
+	subtitle.reset (new HUDMessage ());
+	subtitle->topic = ai;
 	subtitle->identifier = schema_name;
+	subtitle->set_text (text);
+	subtitle->set_color (ChessSet (set).get_color ());
 	start_timer ("FinishSubtitle", duration, false, schema_name);
 
 	return Message::HALT;

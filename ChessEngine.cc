@@ -35,8 +35,7 @@ namespace Chess {
 
 
 Engine::Engine (const String& program_path)
-	: ein_buf (nullptr), ein (nullptr), ein_h (nullptr),
-	  eout_buf (nullptr), eout (nullptr),
+	: ein_handle (nullptr),
 	  difficulty (Thief::Difficulty::HARD),
 	  debug (Thief::QuestVar ("debug_engine").get (ENGINE_DEBUG_DEFAULT)),
 	  started (false), calculating (false)
@@ -53,11 +52,6 @@ Engine::~Engine ()
 {
 	try { write_command ("stop"); } catch (...) {}
 	try { write_command ("quit"); } catch (...) {}
-
-	try { if (eout) delete (eout); } catch (...) {}
-	try { if (eout_buf) delete (eout_buf); } catch (...) {}
-	try { if (ein) delete (ein); } catch (...) {}
-	try { if (ein_buf) delete (ein_buf); } catch (...) {}
 }
 
 
@@ -187,8 +181,8 @@ Engine::launch (const String& program_path)
 	LAUNCH_CHECK (eout_fd != -1);
 	eout_file = _fdopen (eout_fd, "w");
 	LAUNCH_CHECK (eout_file != nullptr);
-	eout_buf = new Buffer (eout_file, std::ios::out, 1);
-	eout = new std::ostream (eout_buf);
+	eout_buf.reset (new Buffer (eout_file, std::ios::out, 1));
+	eout.reset (new std::ostream (eout_buf.get ()));
 
 	LAUNCH_CHECK (::CreatePipe (&engine_stdout_r, &engine_stdout_w,
 		&attrs, 0));
@@ -198,9 +192,9 @@ Engine::launch (const String& program_path)
 	LAUNCH_CHECK (ein_fd != -1);
 	ein_file = _fdopen (ein_fd, "r");
 	LAUNCH_CHECK (ein_file != nullptr);
-	ein_buf = new Buffer (ein_file, std::ios::in, 1);
-	ein = new std::istream (ein_buf);
-	ein_h = engine_stdout_r;
+	ein_buf.reset (new Buffer (ein_file, std::ios::in, 1));
+	ein.reset (new std::istream (ein_buf.get ()));
+	ein_handle = engine_stdout_r;
 
 	STARTUPINFO start_info;
 	::ZeroMemory (&start_info, sizeof (STARTUPINFO));
@@ -290,7 +284,7 @@ Engine::has_reply () const
 	if (!ein) throw std::runtime_error ("no pipe from engine");
 
 	DWORD val;
-	if (!::PeekNamedPipe (ein_h, nullptr, 0, nullptr, &val, nullptr))
+	if (!::PeekNamedPipe (ein_handle, nullptr, 0, nullptr, &val, nullptr))
 		throw std::runtime_error ("could not check for engine reply");
 
 	return val > 0u;

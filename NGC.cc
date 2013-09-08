@@ -46,19 +46,25 @@ translate (const String& _msgid, Side side)
 Team
 get_chess_team (Side side)
 {
-	return (QuestVar ("good_side").get () == side.value)
-		? Team::GOOD : Team::BAD_1;
+	if (side.value == QuestVar ("chess_side_good").get ())
+		return Team::GOOD;
+	else if (side.value == QuestVar ("chess_side_evil").get ())
+		return Team::BAD_1;
+	else
+		return Team::NEUTRAL;
 }
 
 Side
 get_chess_side (Team team)
 {
-	Side good = Side::Value (QuestVar ("good_side").get ());
 	switch (team)
 	{
-	case Team::GOOD: return good;
-	case Team::BAD_1: return good.get_opponent ();
-	default: return Side::NONE;
+	case Team::GOOD:
+		return Side::Value (QuestVar ("chess_side_good").get ());
+	case Team::BAD_1:
+		return Side::Value (QuestVar ("chess_side_evil").get ());
+	default:
+		return Side::NONE;
 	}
 }
 
@@ -66,7 +72,7 @@ int
 get_facing_direction (Side side)
 {
 	return side.get_facing_direction () *
-		((QuestVar ("good_side").get () == 0) ? 1 : -1);
+		((QuestVar ("chess_side_good").get () == 0) ? 1 : -1);
 }
 
 
@@ -123,38 +129,25 @@ ChessSet::get_color () const
 
 // HUDMessage
 
-const HUD::ZIndex
-HUDMessage::PRIORITY = 20;
-
 const int
 HUDMessage::BORDER = 2;
 
 const int
 HUDMessage::PADDING = 12;
 
-HUDMessage::HUDMessage (const Object& _topic, const String& _text,
-		const Color& color, bool _enabled)
-	: HUDElement (), enabled (_enabled), topic (_topic), text (_text)
+const CanvasPoint
+HUDMessage::DEFAULT_OFFSET = { 0, 2 * PADDING };
+
+HUDMessage::HUDMessage (HUD::ZIndex priority)
+	: HUDElement (), enabled (true), position (Position::TOPIC),
+	  offset (DEFAULT_OFFSET)
 {
-	initialize (PRIORITY);
-	set_color (color);
+	initialize (priority);
+	set_color (Color (0xffffff));
 }
 
 HUDMessage::~HUDMessage ()
 {}
-
-void
-HUDMessage::set_topic (const Object& _topic)
-{
-	topic = _topic;
-	schedule_redraw ();
-}
-
-String
-HUDMessage::get_text () const
-{
-	return text;
-}
 
 void
 HUDMessage::set_text (const String& _text)
@@ -164,18 +157,20 @@ HUDMessage::set_text (const String& _text)
 }
 
 void
-HUDMessage::set_color (const Color& color)
+HUDMessage::set_color (const Color& color, float luminance_mult)
 {
-	color_fg = color;
+	LabColor _color_fg (color);
+	_color_fg.L *= luminance_mult;
+	color_fg = _color_fg;
 
-	// The background is a near-black version of the foreground.
+	// The background is a near-black version of the original.
 	LabColor _color_bg (color);
-	_color_bg.L = -0.2 * (100.0 - _color_bg.L);
+	_color_bg.L = 0.0;
 	color_bg = _color_bg;
 
 	// The border is slightly darker than the foreground.
-	LabColor _color_border (color);
-	_color_border.L /= 3.0;
+	LabColor _color_border (_color_fg);
+	_color_border.L /= 2.0;
 	color_border = _color_border;
 }
 
@@ -192,12 +187,10 @@ HUDMessage::prepare ()
 	elem_size.h = BORDER + PADDING + text_size.h + PADDING + BORDER;
 
 	// Get the topic's position in canvas coordinates.
-	CanvasPoint topic_pos;
+	CanvasPoint topic_pos = CanvasPoint::OFFSCREEN;
 	Player player;
-	if (topic == Object::NONE || topic == player ||
-	    player.is_in_inventory (topic))
-		topic_pos = CanvasPoint (canvas.w / 2, canvas.h / 2);
-	else
+	if (topic != Object::NONE && topic != player &&
+	    !player.is_in_inventory (topic))
 	{
 		topic_pos = centroid_to_canvas (topic);
 		if (!topic_pos.valid ()) return false;
@@ -205,10 +198,31 @@ HUDMessage::prepare ()
 
 	// Calculate the element position.
 	CanvasPoint elem_pos;
-	elem_pos.x = std::max (0, std::min (canvas.w - elem_size.w,
-		topic_pos.x - elem_size.w / 2));
-	elem_pos.y = std::max (0, std::min (canvas.h - elem_size.h,
-		topic_pos.y + 2 * PADDING)); // slightly below center
+	switch (position)
+	{
+	case Position::TOPIC:
+		if (topic_pos.valid ())
+		{
+			elem_pos = { topic_pos.x - elem_size.w / 2 + offset.x,
+				topic_pos.y + offset.y };
+			break;
+		}
+	case Position::CENTER:
+		elem_pos = { (canvas.w - elem_size.w) / 2 + offset.x,
+			canvas.h / 2 + offset.y };
+		break;
+	case Position::NW:
+		elem_pos = offset;
+		break;
+	case Position::NORTH:
+		elem_pos = { (canvas.w - elem_size.w) / 2 + offset.x, offset.y };
+		break;
+	case Position::NE:
+		elem_pos = { canvas.w - elem_size.w - offset.x, offset.y };
+		break;
+	}
+	elem_pos.x = std::max (0, std::min (canvas.w - elem_size.w, elem_pos.x));
+	elem_pos.y = std::max (0, std::min (canvas.h - elem_size.h, elem_pos.y));
 
 	set_position (elem_pos);
 	set_size (elem_size);
@@ -224,11 +238,13 @@ HUDMessage::redraw ()
 
 	// draw border
 	set_drawing_color (color_border);
-	draw_box ();
+	CanvasSize elem_size = get_size ();
+	for (int i = 0; i < BORDER; ++i)
+		draw_box ({ i, i, elem_size.w - 2 * i, elem_size.h - 2 * i });
 
 	// draw text
 	set_drawing_color (color_fg);
-	draw_text (text, CanvasPoint (BORDER+PADDING, BORDER+PADDING));
+	draw_text (text, { BORDER + PADDING, BORDER + PADDING });
 }
 
 
@@ -248,8 +264,9 @@ NGCTitled::NGCTitled (const String& _name, const Object& _host,
 void
 NGCTitled::initialize ()
 {
-	title.reset (new HUDMessage (host ()));
+	title.reset (new HUDMessage ());
 	title->enabled = false;
+	title->topic = host ();
 	if (title_msgid.exists () && title->get_text ().empty ())
 		title->set_text (Chess::translate (title_msgid));
 }
@@ -415,8 +432,6 @@ NGCScenario::disable (Message&)
 	host ().add_metaprop (Object ("FrobInert"));
 	host_as<AmbientHacked> ().active = false;
 	host_as<AnimLight> ().set_light_mode (AnimLight::Mode::SMOOTH_DIM);
-	ObjectProperty ("StTweqRotate", host ()).set_field ("AnimS", 0); //TODO Use RotateTweq once available.
-	ObjectProperty ("StTweqScale", host ()).set_field ("AnimS", 0); //TODO Use ScaleTweq once available.
 
 	// Turn off the fill lighting (on the wall object).
 	AnimLight wall = ScriptParamsLink::get_one_by_data
@@ -488,8 +503,7 @@ NGCClock::initialize ()
 	NGCTitled::initialize ();
 	if (!running.exists ())
 		running = (time_control != 0ul);
-	if (title)
-		update_display ();
+	update_display ();
 }
 
 Message::Result
@@ -519,7 +533,7 @@ NGCClock::tick_tock (Message& message)
 	}
 
 	// Update the time display.
-	else if (title)
+	else
 		update_display ();
 
 	return Message::HALT;
@@ -560,9 +574,16 @@ NGCClock::update_display ()
 
 NGCFlag::NGCFlag (const String& _name, const Object& _host)
 	: NGCTitled (_name, _host),
-	  PARAMETER_ (message_name, "message", "TurnOn")
+	  PARAMETER (question, String ()),
+	  PARAMETER_ (message_name, "message", "TurnOn"),
+	  PERSISTENT (orig_loc, Vector ()),
+	  PERSISTENT (orig_rot, Vector ()),
+	  PERSISTENT (drop_loc, Vector ()),
+	  PERSISTENT (drop_rot, Vector ()),
+	  boomerang (*this, &NGCFlag::boomerang_step, "Boomerang", 20ul, 320ul)
 {
 	listen_message ("FrobWorldEnd", &NGCFlag::ask_question);
+	listen_message ("WorldDeSelect", &NGCFlag::intercept_deselect);
 	listen_message ("FrobInvEnd", &NGCFlag::answered_yes);
 	listen_message ("Contained", &NGCFlag::answered_no);
 }
@@ -570,26 +591,37 @@ NGCFlag::NGCFlag (const String& _name, const Object& _host)
 Message::Result
 NGCFlag::ask_question (FrobMessage&)
 {
-	Object clone = host ().clone ();
-	Link::create ("Owns", host (), clone);
+	orig_loc = host ().get_location ();
+	orig_rot = host ().get_rotation ();
 
 	Player player;
-	player.add_to_inventory (clone);
-	player.select_item (clone);
+	player.add_to_inventory (host ());
+	player.select_item (host ());
 
-	host_as<Rendered> ().render_type = Rendered::RenderType::NONE;
+	if (title)
+	{
+		title->enabled = true;
+		title->set_text (Chess::translate (question));
+		title->offset = { 0, 64 };
+	}
 
+	return Message::HALT;
+}
+
+Message::Result
+NGCFlag::intercept_deselect (Message&)
+{
+	if (title && Player ().is_in_inventory (host ()))
+		title->enabled = true;
 	return Message::HALT;
 }
 
 Message::Result
 NGCFlag::answered_yes (FrobMessage&)
 {
-	Rendered owner = Link::get_one ("~Owns", host ()).get_dest ();
-	owner.render_type = Rendered::RenderType::NORMAL;
 	GenericMessage (message_name->data ()).broadcast
-		(owner, "ControlDevice");
-	// This object (the clone) will be destroyed by the FrobInfo.
+		(host (), "ControlDevice");
+	end_question ();
 	return Message::HALT;
 }
 
@@ -597,12 +629,35 @@ Message::Result
 NGCFlag::answered_no (ContainmentMessage& message)
 {
 	if (message.get_event () == ContainmentMessage::REMOVE)
-	{
-		Rendered owner = Link::get_one ("~Owns", host ()).get_dest ();
-		owner.render_type = Rendered::RenderType::NORMAL;
-		host ().schedule_destruction (10ul);
-	}
+		end_question ();
 	return Message::HALT;
+}
+
+void
+NGCFlag::end_question ()
+{
+	if (title)
+	{
+		title->enabled = false;
+		title->set_text (Chess::translate (title_msgid));
+		title->offset = HUDMessage::DEFAULT_OFFSET;
+	}
+	Player player;
+	player.remove_from_inventory (host ());
+	drop_loc = player.object_to_world ({ 4.0f, 0.0f, 2.0f });
+	drop_rot = player.get_rotation ();
+	boomerang.start ();
+}
+
+bool
+NGCFlag::boomerang_step ()
+{
+	auto self = host_as<Physical> ();
+	if (self.is_physical ())
+		self.physics_type = Physical::PhysicsType::NONE;
+	self.set_position (boomerang.interpolate (drop_loc, orig_loc),
+		boomerang.interpolate (drop_rot, orig_rot));
+	return true;
 }
 
 

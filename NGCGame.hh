@@ -25,6 +25,14 @@
 #include "ChessGame.hh"
 #include "ChessEngine.hh"
 
+class GameMessage : public HUDMessage
+{
+public:
+	typedef std::unique_ptr<GameMessage> Ptr;
+
+	GameMessage (Side, float luminance_mult);
+};
+
 class NGCGame : public Script
 {
 public:
@@ -52,6 +60,21 @@ private:
 	void update_interface ();
 	Message::Result tick_tock (TimerMessage&);
 
+	Chess::Game::Ptr game;
+	Persistent<String> record;
+
+	Parameter<Side> good_side;
+	Persistent<Side> evil_side;
+
+	enum class State
+	{
+		NONE = 0,
+		INTERACTIVE,
+		COMPUTING,
+		MOVING
+	};
+	Persistent<State> state;
+
 	// Player moves
 
 	Message::Result select_from (Message&);
@@ -60,10 +83,17 @@ private:
 
 	// Engine moves
 
+	void prepare_engine (bool resume_computing);
+
 	void start_computing ();
 	Message::Result halt_computing (TimerMessage&);
 	Message::Result check_engine (TimerMessage&);
 	void finish_computing ();
+
+	void engine_failure (const String& where, const String& what);
+	Message::Result early_engine_failure (TimerMessage&);
+
+	Chess::Engine::Ptr engine;
 
 	// All moves
 
@@ -79,35 +109,21 @@ private:
 	void start_endgame ();
 	Message::Result finish_endgame (Message&);
 
-	// Heraldry
+	// Announcements
 
 	void announce_event (const Event::ConstPtr&);
 	void herald_concept (Side, const String& concept, Time delay = 0ul);
-	void announce_check ();
+	Message::Result end_announcement (TimerMessage&);
+	GameMessage::Ptr announcement, good_check, evil_check;
 
 	// Miscellaneous
 
 	Message::Result show_logbook (Message&);
 
-	void engine_failure (const String& where, const String& what);
 	void script_failure (const String& where, const String& what);
 	Message::Result end_mission (TimerMessage&);
-	Message::Result early_engine_failure (TimerMessage&);
 
-	Game* game;
-	Chess::Engine* engine;
-
-	Persistent<String> record;
-	Parameter<Side> good_side;
-
-	enum class State
-	{
-		NONE = 0,
-		INTERACTIVE,
-		COMPUTING,
-		MOVING
-	};
-	Persistent<State> state;
+	Parameter<float> luminance_mult;
 };
 
 #endif // NGCGAME_HH

@@ -64,28 +64,29 @@ class HUDMessage : public HUDElement
 public:
 	typedef std::unique_ptr<HUDMessage> Ptr;
 
-	HUDMessage (const Object& topic, const String& text = String (),
-		const Color& = Color (0xffffff), bool enabled = true);
+	HUDMessage (HUD::ZIndex priority = 20);
 	virtual ~HUDMessage ();
 
 	bool enabled;
+	enum class Position { TOPIC, CENTER, NW, NORTH, NE } position;
+	CanvasPoint offset;
+	static const CanvasPoint DEFAULT_OFFSET;
+
+	Object topic;
 	String identifier;
 
-	void set_topic (const Object&);
-
-	String get_text () const;
+	String get_text () const { return text; }
 	void set_text (const String&);
 
-	void set_color (const Color&);
+	Color get_color () const { return color_fg; }
+	void set_color (const Color&, float luminance_mult = 1.0f);
 
-private:
+protected:
 	virtual bool prepare ();
 	virtual void redraw ();
 
-	static const HUD::ZIndex PRIORITY;
 	static const int BORDER, PADDING;
 
-	Object topic;
 	String text;
 	Color color_fg, color_bg, color_border;
 };
@@ -189,10 +190,18 @@ public:
 
 private:
 	Message::Result ask_question (FrobMessage&);
+	Message::Result intercept_deselect (Message&);
+	Parameter<String> question;
+
 	Message::Result answered_yes (FrobMessage&);
+	Parameter<String> message_name;
+
 	Message::Result answered_no (ContainmentMessage&);
 
-	Parameter<String> message_name;
+	void end_question ();
+	bool boomerang_step ();
+	Persistent<Vector> orig_loc, orig_rot, drop_loc, drop_rot;
+	Transition boomerang;
 };
 
 

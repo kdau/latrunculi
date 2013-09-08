@@ -85,6 +85,8 @@ typedef std::vector<HistoryEntry> History;
 class Game : public Position
 {
 public:
+	typedef std::unique_ptr<Game> Ptr;
+
 	Game ();
 	Game (const Game&) = delete;
 

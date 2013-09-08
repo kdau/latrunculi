@@ -30,6 +30,8 @@ namespace Chess {
 class Engine
 {
 public:
+	typedef std::unique_ptr<Engine> Ptr;
+
 	Engine (const String& program_path);
 	~Engine ();
 
@@ -60,8 +62,10 @@ private:
 	void write_command (const String& command);
 
 	typedef __gnu_cxx::stdio_filebuf<char> Buffer;
-	Buffer* ein_buf; std::istream* ein; void* ein_h;
-	Buffer* eout_buf; std::ostream* eout;
+	std::unique_ptr<Buffer> ein_buf, eout_buf;
+	std::unique_ptr<std::istream> ein;
+	std::unique_ptr<std::ostream> eout;
+	void* ein_handle;
 
 	Thief::Difficulty difficulty;
 	String best_move;

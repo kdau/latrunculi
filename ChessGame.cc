@@ -539,7 +539,7 @@ Game::get_halfmove_prefix (unsigned halfmove)
 Event::ConstPtr
 Game::get_last_event () const
 {
-	return history.empty () ? Event::ConstPtr () : history.back ().second;
+	return history.empty () ? nullptr : history.back ().second;
 }
 
 bool

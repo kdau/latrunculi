@@ -27,13 +27,27 @@
 	catch (std::exception& e) { script_failure (where, e.what ()); retstmt; }
 
 
+// GameMessage
+
+GameMessage::GameMessage (Side side, float luminance_mult)
+	: HUDMessage (10)
+{
+	position = Position::NORTH;
+	offset = { PADDING, PADDING };
+	set_color (ChessSet (side).get_color (), luminance_mult);
+}
+
+
+
+// NGCGame
 
 NGCGame::NGCGame (const String& _name, const Object& _host)
 	: Script (_name, _host),
-	  game (nullptr), engine (nullptr),
 	  PERSISTENT_ (record),
-	  PARAMETER_ (good_side, "good_side", Side::NONE),
-	  PERSISTENT (state, State::NONE)
+	  PARAMETER_ (good_side, "chess_side_good", Side::NONE),
+	  PERSISTENT (evil_side, Side::NONE),
+	  PERSISTENT (state, State::NONE),
+	  PARAMETER (luminance_mult, 1.0f)
 {
 	listen_message ("PostSim", &NGCGame::start_game);
 
@@ -52,6 +66,8 @@ NGCGame::NGCGame (const String& _name, const Object& _host)
 	listen_message ("Draw", &NGCGame::record_draw);
 	listen_message ("FinishEndgame", &NGCGame::finish_endgame);
 
+	listen_timer ("EndAnnouncement", &NGCGame::end_announcement);
+
 	listen_message ("TurnOn", &NGCGame::show_logbook);
 
 	listen_timer ("EndMission", &NGCGame::end_mission);
@@ -59,10 +75,7 @@ NGCGame::NGCGame (const String& _name, const Object& _host)
 }
 
 NGCGame::~NGCGame ()
-{
-	try { if (engine) delete engine; } catch (...) {}
-	try { if (game) delete game; } catch (...) {}
-}
+{}
 
 
 
@@ -104,16 +117,13 @@ NGCGame::get_piece_at (const Object& square)
 void
 NGCGame::initialize ()
 {
-	if (good_side == Side::NONE)
-		good_side = Side::Value (Thief::Engine::random_int
-			(Side::WHITE, Side::BLACK));
-
 	bool resume_computing = false;
+
 	if (record.exists ()) // existing game
 	{
 		std::istringstream _record (record);
-		try { game = new Game (_record); }
-		CATCH_SCRIPT_FAILURE ("initialize", game = nullptr; return) //FIXME pre-Sim clean?
+		try { game.reset (new Game (_record)); }
+		CATCH_SCRIPT_FAILURE ("initialize", return)
 
 		if (game->get_result () != Game::Result::ONGOING)
 			return; // Don't start the engine at all.
@@ -124,38 +134,12 @@ NGCGame::initialize ()
 	}
 	else // new game
 	{
-		game = new Game ();
+		game.reset (new Game ());
 		update_record ();
 		// Remainder of preparations will occur post-Sim.
 	}
 
-	try
-	{
-		String engine_path = Thief::Engine::find_file_in_path
-			("script_module_path", "engine.ose");
-		if (engine_path.empty ())
-			throw std::runtime_error ("could not find chess engine");
-		engine = new Chess::Engine (engine_path);
-
-		String openings_path = Thief::Engine::find_file_in_path
-			("script_module_path", "openings.bin");
-		if (!openings_path.empty ())
-			engine->set_openings_book (openings_path);
-		else
-			engine->clear_openings_book ();
-
-		engine->set_difficulty (Mission::get_difficulty ());
-		engine->start_game (game);
-
-		if (resume_computing)
-			start_computing ();
-	}
-	catch (std::exception& e)
-	{
-		engine = nullptr;
-		start_timer ("EarlyEngineFailure", 10ul, false,
-			String (e.what ()));
-	}
+	prepare_engine (resume_computing);
 }
 
 Message::Result
@@ -163,7 +147,13 @@ NGCGame::start_game (Message&)
 {
 	if (!game) return Message::ERROR;
 
-	QuestVar ("good_side").set (good_side->value);
+	if (good_side == Side::NONE)
+		good_side = Side::Value (Thief::Engine::random_int
+			(Side::WHITE, Side::BLACK));
+	QuestVar ("chess_side_good").set (good_side->value);
+
+	evil_side = good_side->get_opponent ();
+	QuestVar ("chess_side_evil").set (evil_side->value);
 
 	Object good_mp ((good_side == Side::WHITE)
 		? "M-ChessWhite" : "M-ChessBlack");
@@ -194,13 +184,22 @@ NGCGame::start_game (Message&)
 	if (proxy_origin != Object::NONE)
 		arrange_board (proxy_origin, true);
 
+	good_check.reset (new GameMessage (good_side, luminance_mult));
+	good_check->enabled = false;
+	good_check->position = HUDMessage::Position::NW;
+	good_check->set_text (Check (good_side).get_description ());
+
+	evil_check.reset (new GameMessage (evil_side, luminance_mult));
+	evil_check->enabled = false;
+	evil_check->position = HUDMessage::Position::NE;
+	evil_check->set_text (Check (evil_side).get_description ());
+
 	update_sim ();
 	start_timer ("TickTock", 1000ul, true);
 	start_timer ("CheckEngine", 250ul, true);
 
 	// Announce the beginning of the game.
-	herald_concept (Side::WHITE, "begin", 250ul);
-	herald_concept (Side::BLACK, "begin", 6750ul);
+	announce_event (std::make_shared<StartGame> ());
 
 	// Prepare for the "next" (first) move. If playing as black, delay it
 	// until after the opening herald announcements.
@@ -278,7 +277,7 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 
 	if (_piece.side == good_side)
 		piece.add_metaprop (Object ("M-ChessGood"));
-	else if (_piece.side == good_side->get_opponent ())
+	else if (_piece.side == evil_side)
 		piece.add_metaprop (Object ("M-ChessEvil"));
 
 	if (_piece.side == Side::WHITE)
@@ -296,7 +295,6 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 	else if (start_positioned)
 	{
 		GenericMessage ("Reveal").send (host (), piece);
-
 		GenericMessage::with_data ("Reposition", nullptr, true)
 			.send (host (), piece);
 	}
@@ -315,7 +313,7 @@ NGCGame::update_record ()
 		game->serialize (_record);
 		record = _record.str ();
 
-		// Update "moves made" statistic. //FIXME assumes side? (parity)
+		// Update "moves made" statistic.
 		QuestVar ("stat_moves").set (game->get_fullmove_number () - 1u);
 	}
 }
@@ -356,11 +354,13 @@ NGCGame::update_interface ()
 
 	bool have_ongoing_game =
 		game && game->get_result () == Game::Result::ONGOING;
-	bool can_resign = state == State::INTERACTIVE && have_ongoing_game &&
+	bool can_resign = have_ongoing_game && state == State::INTERACTIVE &&
 		game->get_active_side () == good_side;
 	bool can_draw = can_resign && (game->get_fifty_move_clock () >= 50u ||
 		game->is_third_repetition ());
 	bool can_exit = state == State::NONE && !have_ongoing_game;
+
+	// Enable or disable the flags based on game state.
 
 	for (auto& flag : ScriptParamsLink::get_all_by_data
 				(host (), "ResignFlag"))
@@ -383,6 +383,7 @@ NGCGame::update_interface ()
 
 	if (!game) return;
 
+	// Update the squares interface (buttons and decals).
 	for (auto _square = Square::BEGIN; _square.is_valid (); ++_square)
 	{
 		Object square = get_square (_square);
@@ -472,6 +473,38 @@ NGCGame::clear_selection ()
 // Engine moves
 
 void
+NGCGame::prepare_engine (bool resume_computing)
+{
+	try
+	{
+		String engine_path = Thief::Engine::find_file_in_path
+			("script_module_path", "engine.ose");
+		if (engine_path.empty ())
+			throw std::runtime_error ("could not find chess engine");
+		engine.reset (new Chess::Engine (engine_path));
+
+		String openings_path = Thief::Engine::find_file_in_path
+			("script_module_path", "openings.bin");
+		if (!openings_path.empty ())
+			engine->set_openings_book (openings_path);
+		else
+			engine->clear_openings_book ();
+
+		engine->set_difficulty (Mission::get_difficulty ());
+		engine->start_game (game.get ());
+
+		if (resume_computing)
+			start_computing ();
+	}
+	catch (std::exception& e)
+	{
+		engine.reset ();
+		start_timer ("EarlyEngineFailure", 10ul, false,
+			String (e.what ()));
+	}
+}
+
+void
 NGCGame::start_computing ()
 {
 	if (!engine || state == State::NONE) return;
@@ -483,9 +516,6 @@ NGCGame::start_computing ()
 	CATCH_ENGINE_FAILURE ("start_computing", return)
 
 	start_timer ("HaltComputing", comp_time, false);
-
-	if (game->is_in_check ())
-		announce_check ();
 
 	for (auto& opponent : ScriptParamsLink::get_all_by_data
 				(host (), "Opponent"))
@@ -532,8 +562,8 @@ NGCGame::finish_computing ()
 		if (game->get_result () == Game::Result::ONGOING)
 			try
 			{
-				game->record_loss (Loss::Type::RESIGNATION,
-					good_side->get_opponent ());
+				game->record_loss
+					(Loss::Type::RESIGNATION, evil_side);
 				start_endgame ();
 			}
 			CATCH_SCRIPT_FAILURE ("finish_computing",)
@@ -545,6 +575,43 @@ NGCGame::finish_computing ()
 		start_move (move, true);
 	else
 		engine_failure ("finish_computing", "no best move");
+}
+
+void
+NGCGame::engine_failure (const String& where, const String& what)
+{
+	mono () << "Error: Engine failure in " << where << ": " << what
+		<< std::endl;
+
+	engine.reset ();
+	if (state == State::COMPUTING)
+		state = State::INTERACTIVE;
+
+	// Inform the player that both sides will be interactive.
+	Mission::show_book ("engine-problem", "parch");
+
+	// Eliminate objects associated with the computer opponent.
+	for (auto& fence : ScriptParamsLink::get_all_by_data
+			(host (), "OpponentFence"))
+		fence.get_dest ().destroy ();
+	for (auto& _opponent : ScriptParamsLink::get_all_by_data
+			(host (), "Opponent"))
+	{
+		Damageable opponent = _opponent.get_dest ();
+		opponent.remove_metaprop (Object ("M-ChessAlive"));
+		opponent.slay (host ());
+	}
+
+	update_interface ();
+}
+
+Message::Result
+NGCGame::early_engine_failure (TimerMessage& message)
+{
+	// This timer is only set from the initialize method.
+	engine_failure ("initialize",
+		message.get_data (Message::DATA1, String ()));
+	return Message::HALT;
 }
 
 
@@ -570,8 +637,9 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		CATCH_ENGINE_FAILURE ("start_move",)
 	}
 
-	if (from_engine)
-		announce_event (move);
+	announce_event (move);
+	good_check->enabled = false;
+	evil_check->enabled = false;
 
 	Object piece = get_piece_at (move->get_from ()),
 		from = get_square (move->get_from ()),
@@ -669,16 +737,28 @@ NGCGame::finish_move (Message&)
 	if (!game || state != State::MOVING) return Message::ERROR;
 
 	if (game->get_result () != Game::Result::ONGOING)
+	{
 		start_endgame ();
+		return Message::HALT;
+	}
 
-	else if (engine && game->get_active_side () != good_side)
+	// Announce check, if any.
+	if (game->is_in_check ())
+	{
+		if (good_check && game->get_active_side () == good_side)
+			good_check->enabled = true;
+		else if (evil_check && game->get_active_side () == evil_side)
+			evil_check->enabled = true;
+		announce_event (std::make_shared<Check>
+			(game->get_active_side ()));
+	}
+
+	// Prepare for the next move.
+	if (engine && game->get_active_side () != good_side)
 		start_computing ();
-
 	else
 	{
 		state = State::INTERACTIVE;
-		if (game->is_in_check ())
-			announce_check ();
 		update_interface ();
 	}
 
@@ -766,11 +846,7 @@ NGCGame::start_endgame ()
 	state = State::NONE;
 
 	// Don't need the engine anymore.
-	if (engine)
-	{
-		try { delete engine; } catch (...) {}
-		engine = nullptr;
-	}
+	engine.reset ();
 
 	update_sim ();
 	update_interface ();
@@ -836,18 +912,32 @@ NGCGame::announce_event (const Event::ConstPtr& event)
 {
 	if (!event) return;
 
-	String description = event->get_description ();
-	if (!description.empty ())
+	// Display the description on screen, if appropriate.
+	String description = event->get_description (),
+		identifier = event->serialize ();
+	if (!description.empty () && !identifier.empty ())
+	{
 		description.front () = std::toupper (description.front ());
-	Mission::show_text (description, std::max (4000ul,
-			Mission::calc_text_duration (description).value),
-		ChessSet (event->get_side ()).get_color ()); //FIXME Use a fancier subtitle.
+		announcement.reset (new GameMessage
+			(event->get_side (), luminance_mult));
+		announcement->identifier = identifier;
+		announcement->set_text (description);
+		start_timer ("EndAnnouncement", std::max (5000ul,
+			Mission::calc_text_duration (description, 1000ul).value),
+			false, identifier);
+	}
 
+	// Play the heralds' sounds/motions. Both sides for the start of the game
+	// or a draw; the event's side's opponent for a check; and the event's
+	// side for anything else. Delay a check briefly to avoid overlap.
 	if (event->get_side () == Side::NONE)
 	{
-		herald_concept (Side::WHITE, event->get_concept ());
-		herald_concept (Side::BLACK, event->get_concept (), 6500ul);
+		herald_concept (Side::WHITE, event->get_concept (), 250ul);
+		herald_concept (Side::BLACK, event->get_concept (), 6750ul);
 	}
+	else if (std::dynamic_pointer_cast<const Check> (event))
+		herald_concept (event->get_side ().get_opponent (),
+			event->get_concept (), 500ul);
 	else
 		herald_concept (event->get_side (), event->get_concept ());
 
@@ -885,19 +975,21 @@ NGCGame::herald_concept (Side side, const String& concept, Time delay)
 				(host (), "Herald"))
 	{
 		Object herald = _herald.get_dest ();
+		Time my_delay = delay + Thief::Engine::random_int (0, 50);
 		if (side == Side::NONE || side ==
 		    Parameter<Side> (herald, "chess_side", { Side::NONE }))
 			GenericMessage::with_data ("HeraldConcept", concept)
-				.schedule (host (), herald, delay, false);
+				.schedule (host (), herald, my_delay, false);
 	}
 }
 
-void
-NGCGame::announce_check ()
+Message::Result
+NGCGame::end_announcement (TimerMessage& message)
 {
-	if (game && game->is_in_check ())
-		announce_event (std::make_shared<Check>
-			(game->get_active_side ()));
+	String identifier = message.get_data (Message::DATA1, String ());
+	if (announcement && announcement->identifier == identifier)
+		announcement.reset ();
+	return Message::HALT;
 }
 
 
@@ -909,16 +1001,20 @@ NGCGame::show_logbook (Message& message)
 {
 	if (!game) return Message::ERROR;
 
-	Readable book = message.get_from ();
-	if (!book.inherits_from (Object ("Book"))) return Message::HALT;
+	Readable readable = message.get_from ();
+	if (!readable.inherits_from (Object ("Book"))) return Message::HALT;
 
 	try
 	{
-		String path = Thief::Engine::find_file_in_path
+		String book_path = Thief::Engine::find_file_in_path
 			("resname_base", "books\\logbook.str");
-		if (path.empty ())
+		if (book_path.empty ())
 			throw std::runtime_error ("missing logbook file");
-		std::ofstream logbook (path);
+		String plain_path = Mission::get_path_in_fm ("logbook.txt");
+		std::ofstream book (book_path), plain (plain_path);
+
+		plain << Game::get_logbook_heading (1u)
+			<< std::endl << std::endl;
 
 		unsigned halfmove = 0u, page = 0u;
 		for (auto& entry : game->get_history ())
@@ -927,23 +1023,25 @@ NGCGame::show_logbook (Message& message)
 			if (halfmove % 9u == 0u)
 			{
 				if (halfmove != 0u)
-					logbook << "...\"" << std::endl;
-				logbook << "page_" << page++ << ": \"";
-				logbook << Game::get_logbook_heading (page)
+					book << "...\"" << std::endl;
+				book << "page_" << page++ << ": \"";
+				book << Game::get_logbook_heading (page)
 					<< std::endl << std::endl;
 			}
 			String description = entry.second->get_description ();
 			if (!description.empty ())
 				description.front () =
 					std::toupper (description.front ());
-			logbook << Game::get_halfmove_prefix (halfmove)
+			book << Game::get_halfmove_prefix (halfmove)
 				<< description << std::endl << std::endl;
+			plain << Game::get_halfmove_prefix (halfmove)
+				<< description << std::endl;
 			++halfmove;
 		}
 		if (game->get_history ().empty ())
-			logbook << "page_0: \""
+			book << "page_0: \""
 				<< Game::get_logbook_heading (1u);
-		logbook << "\"" << std::endl;
+		book << "\"" << std::endl;
 	}
 	catch (std::exception& e)
 	{
@@ -953,42 +1051,10 @@ NGCGame::show_logbook (Message& message)
 		return Message::ERROR;
 	}
 
-	if (!book.book_art.exists ()) book.book_art = "pbook";
-	Mission::show_book ("logbook", book.book_art, true);
+	if (!readable.book_art.exists ())
+		readable.book_art = "pbook";
+	Mission::show_book ("logbook", readable.book_art, true);
 	return Message::HALT;
-}
-
-void
-NGCGame::engine_failure (const String& where, const String& what)
-{
-	mono () << "Error: Engine failure in " << where << ": " << what
-		<< std::endl;
-
-	if (engine)
-	{
-		try { delete engine; } catch (...) {}
-		engine = nullptr;
-	}
-
-	if (state == State::COMPUTING)
-		state = State::INTERACTIVE;
-
-	// Inform the player that both sides will be interactive.
-	Mission::show_book ("engine-problem", "parch");
-
-	// Eliminate objects associated with the computer opponent.
-	for (auto& fence : ScriptParamsLink::get_all_by_data
-			(host (), "OpponentFence"))
-		fence.get_dest ().destroy ();
-	for (auto& _opponent : ScriptParamsLink::get_all_by_data
-			(host (), "Opponent"))
-	{
-		Damageable opponent = _opponent.get_dest ();
-		opponent.remove_metaprop (Object ("M-ChessAlive"));
-		opponent.slay (host ());
-	}
-
-	update_interface ();
 }
 
 void
@@ -997,12 +1063,7 @@ NGCGame::script_failure (const String& where, const String& what)
 	mono () << "Error: Script failure in " << where << ": " << what
 		<< std::endl;
 
-	if (game)
-	{
-		try { delete game; } catch (...) {}
-		game = nullptr;
-	}
-
+	game.reset ();
 	state = State::NONE;
 
 	// Inform the player that we are about to die.
@@ -1015,16 +1076,10 @@ NGCGame::script_failure (const String& where, const String& what)
 Message::Result
 NGCGame::end_mission (TimerMessage&)
 {
+	announcement.reset ();
+	good_check.reset ();
+	evil_check.reset ();
 	Mission::end ();
-	return Message::HALT;
-}
-
-Message::Result
-NGCGame::early_engine_failure (TimerMessage& message)
-{
-	// This timer is only set from the initialize method.
-	engine_failure ("initialize",
-		message.get_data (Message::DATA1, String ()));
 	return Message::HALT;
 }
 

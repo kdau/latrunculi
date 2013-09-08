@@ -32,7 +32,7 @@ LGMulti<Chess::Piece>::LGMulti (const Chess::Piece& value)
 
 LGMulti<Chess::Piece>::operator Chess::Piece () const
 {
-	return Chess::Piece (operator int ());
+	return Chess::Piece (char (operator int ()));
 }
 
 LGMulti<Chess::Side>::LGMulti (const Chess::Side& value)
@@ -41,7 +41,7 @@ LGMulti<Chess::Side>::LGMulti (const Chess::Side& value)
 
 LGMulti<Chess::Side>::operator Chess::Side () const
 {
-	return Chess::Side (operator int ());
+	return Chess::Side (Chess::Side::Value (operator int ()));
 }
 
 THIEF_ENUM_CODING (Chess::Side::Value, CODE, CODE,
@@ -849,6 +849,43 @@ Castling::equals (const Event& _rhs) const
 		rook_piece == rhs.rook_piece &&
 		rook_from == rhs.rook_from &&
 		rook_to == rhs.rook_to;
+}
+
+
+
+// StartGame
+
+StartGame::StartGame ()
+{}
+
+Side
+StartGame::get_side () const
+{
+	return Side::NONE;
+}
+
+MLAN
+StartGame::serialize () const
+{
+	return String ();
+}
+
+bool
+StartGame::equals (const Event&) const
+{
+	return true;
+}
+
+String
+StartGame::get_description () const
+{
+	return String ();
+}
+
+String
+StartGame::get_concept () const
+{
+	return "begin";
 }
 
 
