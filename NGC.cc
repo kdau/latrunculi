@@ -668,6 +668,8 @@ NGCSquare::NGCSquare (const String& _name, const Object& _host)
 	: Script (_name, _host),
 	  PERSISTENT (state, State::EMPTY),
 	  PERSISTENT (piece, Piece ()),
+	  PARAMETER (is_proxy, false),
+	  PARAMETER (scale, 1.0f),
 	  decal_fade (*this, &NGCSquare::decal_fade_step, "DecalFade"),
 	  PARAMETER (decal_offset, Vector ()),
 	  button_fade (*this, &NGCSquare::button_fade_step, "ButtonFade"),
@@ -688,6 +690,35 @@ NGCSquare::update_state (Message& message)
 		piece = message.get_data (Message::DATA2, Piece ());
 	// Otherwise, the piece hasn't changed.
 
+	// Get link data for singleton states.
+	CIString singleton;
+	switch (state)
+	{
+	case State::PROXY_WAS_FROM:
+		singleton = "ProxyFrom";
+		singleton += piece->side.get_code ();
+		break;
+	case State::PROXY_WAS_TO:
+		singleton = "ProxyTo";
+		singleton += piece->side.get_code ();
+		break;
+	default:
+		break;
+	}
+
+	// If in a singleton state, empty the previous square in the state.
+	if (!singleton.empty ())
+	{
+		Object game ("TheGame"), old_singleton =
+			ScriptParamsLink::get_one_by_data (game, singleton)
+				.get_dest ();
+		if (old_singleton != Object::NONE)
+			GenericMessage::with_data ("UpdateState", State::EMPTY,
+				Piece ()).send (game, old_singleton);
+		ScriptParamsLink::create (game, host (), singleton);
+	}
+
+	// Update the decal and button.
 	update_decal ();
 	update_button ();
 
@@ -710,10 +741,13 @@ NGCSquare::update_decal ()
 	{
 	case State::FRIENDLY_INERT:
 	case State::CAN_MOVE_FROM:
+	case State::PROXY_WAS_FROM:
 		break;
 	case State::CAN_MOVE_TO:
+	case State::PROXY_WAS_TO:
 		display_piece.type = Piece::Type::NONE;
-		display_piece.side = piece->side.get_opponent ();
+		if (!is_proxy)
+			display_piece.side = piece->side.get_opponent ();
 		break;
 	default:
 		if (decal != Object::NONE)
@@ -740,9 +774,12 @@ NGCSquare::update_decal ()
 	ScriptParamsLink::create (host (), decal, "Decal");
 
 	Vector location = host ().get_location () + decal_offset,
-		rotation (0.0f, 0.0f, 180.0f + 90.0f *
+		rotation (0.0f, 0.0f, 180.0f + 90.0f * (is_proxy ? -1 : 1) *
 			get_facing_direction (display_piece.side));
 	decal.set_position (location, rotation);
+
+	if (scale != 1.0f)
+		decal.model_scale = { scale, scale, scale };
 
 	std::ostringstream texture;
 	texture << "obj\\txt16\\decal-"
@@ -819,6 +856,9 @@ NGCSquare::update_button ()
 
 	Vector location = host ().get_location () + button_offset;
 	button.set_position (location, rotation);
+
+	if (scale != 1.0f)
+		button.model_scale = { scale, scale, scale };
 
 	Time fade = Parameter<Time> (button, "fade_time", { 500ul });
 	button_fade.length = fade;

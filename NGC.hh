@@ -216,7 +216,9 @@ public:
 		EMPTY,
 		FRIENDLY_INERT,
 		CAN_MOVE_FROM,
-		CAN_MOVE_TO
+		CAN_MOVE_TO,
+		PROXY_WAS_FROM,
+		PROXY_WAS_TO
 	};
 
 	NGCSquare (const String& name, const Object& host);
@@ -225,6 +227,8 @@ private:
 	Message::Result update_state (Message&);
 	Persistent<State> state;
 	Persistent<Piece> piece;
+	Parameter<bool> is_proxy;
+	Parameter<float> scale;
 
 	Rendered get_decal () const;
 	void update_decal ();

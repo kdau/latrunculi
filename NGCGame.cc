@@ -171,7 +171,8 @@ NGCGame::start_game (Message&)
 		}
 	}
 
-	Object board_origin ("BoardOrigin");
+	Object board_origin = ScriptParamsLink::get_one_by_data
+		(host (), "BoardOrigin").get_dest ();
 	if (board_origin != Object::NONE)
 		arrange_board (board_origin, false);
 	else
@@ -180,7 +181,8 @@ NGCGame::start_game (Message&)
 		return Message::ERROR;
 	}
 
-	Object proxy_origin ("ProxyOrigin");
+	Object proxy_origin = ScriptParamsLink::get_one_by_data
+		(host (), "ProxyOrigin").get_dest ();
 	if (proxy_origin != Object::NONE)
 		arrange_board (proxy_origin, true);
 
@@ -213,7 +215,7 @@ NGCGame::start_game (Message&)
 void
 NGCGame::arrange_board (const Object& origin, bool proxy)
 {
-	Object archetype ("ChessSquare");
+	Object archetype (proxy ? "ChessProxySquare" : "ChessSquare");
 	if (origin == Object::NONE || archetype == Object::NONE) return;
 
 	Vector origin_location = origin.get_location (),
@@ -637,10 +639,12 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		CATCH_ENGINE_FAILURE ("start_move",)
 	}
 
+	// Announce the move and clear any check indicator.
 	announce_event (move);
 	good_check->enabled = false;
 	evil_check->enabled = false;
 
+	// Identify the moving piece and squares.
 	Object piece = get_piece_at (move->get_from ()),
 		from = get_square (move->get_from ()),
 		to = get_square (move->get_to ());
@@ -650,6 +654,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		return;
 	}
 
+	// Identify any capture, updating the proxy board and statistics.
 	Object captured_piece;
 	if (auto capture = std::dynamic_pointer_cast<const Capture> (move))
 	{
@@ -666,6 +671,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		statistic.set (statistic.get () + 1);
 	}
 
+	// Set up a castling sequence, if applicable.
 	auto castling = std::dynamic_pointer_cast<const Castling> (move);
 	if (castling)
 	{
@@ -691,14 +697,27 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 			place_proxy (rook_proxy, rook_to_proxy);
 	}
 
+	// Update the Population links on the main board.
 	Link::get_one ("Population", from, piece).destroy ();
 	Link::create ("Population", to, piece);
 
+	// Move the piece on the proxy board, placing marker decals.
 	Object piece_proxy = get_piece_at (move->get_from (), true),
+		from_proxy = get_square (move->get_from (), true),
 		to_proxy = get_square (move->get_to (), true);
 	if (piece_proxy != Object::NONE && to_proxy != Object::NONE)
+	{
 		place_proxy (piece_proxy, to_proxy);
+		GenericMessage::with_data ("UpdateState",
+			NGCSquare::State::PROXY_WAS_TO, move->get_piece ())
+				.send (host (), to_proxy);
+	}
+	if (from_proxy != Object::NONE)
+		GenericMessage::with_data ("UpdateState",
+			NGCSquare::State::PROXY_WAS_FROM, move->get_piece ())
+				.send (host (), from_proxy);
 
+	// Start an attack sequence, if any, else go to the square.
 	if (captured_piece != Object::NONE)
 	{
 		Link::get_one ("~Population", captured_piece).destroy ();
@@ -712,6 +731,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		GenericMessage::with_data ("GoToSquare", to).send
 			(host (), piece);
 
+	// Promote the piece, if applicable.
 	Piece promoted_piece = move->get_promoted_piece ();
 	if (promoted_piece.is_valid ())
 	{
