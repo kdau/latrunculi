@@ -63,8 +63,7 @@ private:
 	Chess::Game::Ptr game;
 	Persistent<String> record;
 
-	Parameter<Side> good_side;
-	Persistent<Side> evil_side;
+	Persistent<Side> good_side, evil_side;
 
 	enum class State
 	{
@@ -111,7 +110,7 @@ private:
 
 	// Announcements
 
-	void announce_event (const Event::ConstPtr&);
+	void announce_event (const Event&);
 	void herald_concept (Side, const String& concept, Time delay = 0ul);
 	Message::Result end_announcement (TimerMessage&);
 	GameMessage::Ptr announcement, good_check, evil_check;

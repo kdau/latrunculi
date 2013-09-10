@@ -44,7 +44,7 @@ GameMessage::GameMessage (Side side, float luminance_mult)
 NGCGame::NGCGame (const String& _name, const Object& _host)
 	: Script (_name, _host),
 	  PERSISTENT_ (record),
-	  PARAMETER_ (good_side, "chess_side_good", Side::NONE),
+	  PERSISTENT (good_side, Side::NONE),
 	  PERSISTENT (evil_side, Side::NONE),
 	  PERSISTENT (state, State::NONE),
 	  PARAMETER (luminance_mult, 1.0f)
@@ -127,10 +127,13 @@ NGCGame::initialize ()
 
 		if (game->get_result () != Game::Result::ONGOING)
 			return; // Don't start the engine at all.
-		else if (state == State::COMPUTING)
-			resume_computing = true;
+
 		else if (state == State::NONE) // ???
-			state = State::INTERACTIVE;
+			state = (game->get_active_side () == good_side)
+				? State::INTERACTIVE : State::COMPUTING;
+
+		if (state == State::COMPUTING)
+			resume_computing = true;
 	}
 	else // new game
 	{
@@ -189,19 +192,19 @@ NGCGame::start_game (Message&)
 	good_check.reset (new GameMessage (good_side, luminance_mult));
 	good_check->enabled = false;
 	good_check->position = HUDMessage::Position::NW;
-	good_check->set_text (Check (good_side).get_description ());
+	good_check->set_text (Check (good_side).describe ());
 
 	evil_check.reset (new GameMessage (evil_side, luminance_mult));
 	evil_check->enabled = false;
 	evil_check->position = HUDMessage::Position::NE;
-	evil_check->set_text (Check (evil_side).get_description ());
+	evil_check->set_text (Check (evil_side).describe ());
 
 	update_sim ();
 	start_timer ("TickTock", 1000ul, true);
 	start_timer ("CheckEngine", 250ul, true);
 
 	// Announce the beginning of the game.
-	announce_event (std::make_shared<StartGame> ());
+	announce_event (StartGame ());
 
 	// Prepare for the "next" (first) move. If playing as black, delay it
 	// until after the opening herald announcements.
@@ -227,7 +230,7 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 
 	for (auto _square = Square::BEGIN; _square.is_valid (); ++_square)
 	{
-		Object square = Object::create (archetype);
+		Object square = Object::start_create (archetype);
 		if (square == Object::NONE)
 		{
 			mono () << "Error: could not create a square."
@@ -236,7 +239,7 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 		}
 
 		square.set_name ((proxy ? "Proxy" : "Square")
-			+ _square.get_code ());
+			+ _square.get_code (true));
 
 		double rank = reversed_board
 			? (N_RANKS - size_t (_square.rank) - 1u)
@@ -248,6 +251,8 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 		Vector location = origin_location
 			+ rank_offset * rank + file_offset * file;
 		square.set_position (location, origin_rotation);
+
+		square.finish_create ();
 
 		Piece _piece = game->get_piece_at (_square);
 		if (_piece.is_valid ())
@@ -270,7 +275,7 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 	if (archetype == Object::NONE)
 		return Object::NONE;
 
-	AI piece = Object::create (archetype);
+	AI piece = Object::start_create (archetype);
 	if (piece == Object::NONE)
 	{
 		mono () << "Error: could not create a piece." << std::endl;
@@ -291,6 +296,7 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 		piece.add_metaprop (Object ("M-ChessAlive"));
 
 	Link::create ("Population", square, piece);
+	piece.finish_create ();
 
 	if (proxy)
 		place_proxy (piece, square);
@@ -640,7 +646,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 	}
 
 	// Announce the move and clear any check indicator.
-	announce_event (move);
+	announce_event (*move);
 	good_check->enabled = false;
 	evil_check->enabled = false;
 
@@ -769,8 +775,7 @@ NGCGame::finish_move (Message&)
 			good_check->enabled = true;
 		else if (evil_check && game->get_active_side () == evil_side)
 			evil_check->enabled = true;
-		announce_event (std::make_shared<Check>
-			(game->get_active_side ()));
+		announce_event (Check (game->get_active_side ()));
 	}
 
 	// Prepare for the next move.
@@ -876,7 +881,8 @@ NGCGame::start_endgame ()
 		GenericMessage ("StopTheClock").send (host (), clock.get_dest ());
 
 	// Have the heralds announce the result.
-	announce_event (game->get_last_event ());
+	if (game->get_last_event ())
+		announce_event (*game->get_last_event ());
 }
 
 Message::Result
@@ -928,18 +934,15 @@ NGCGame::finish_endgame (Message& message)
 // Heraldry
 
 void
-NGCGame::announce_event (const Event::ConstPtr& event)
+NGCGame::announce_event (const Event& event)
 {
-	if (!event) return;
-
 	// Display the description on screen, if appropriate.
-	String description = event->get_description (),
-		identifier = event->serialize ();
+	String description = event.describe (),
+		identifier = event.serialize ();
 	if (!description.empty () && !identifier.empty ())
 	{
-		description.front () = std::toupper (description.front ());
 		announcement.reset (new GameMessage
-			(event->get_side (), luminance_mult));
+			(event.get_side (), luminance_mult));
 		announcement->identifier = identifier;
 		announcement->set_text (description);
 		start_timer ("EndAnnouncement", std::max (5000ul,
@@ -950,19 +953,19 @@ NGCGame::announce_event (const Event::ConstPtr& event)
 	// Play the heralds' sounds/motions. Both sides for the start of the game
 	// or a draw; the event's side's opponent for a check; and the event's
 	// side for anything else. Delay a check briefly to avoid overlap.
-	if (event->get_side () == Side::NONE)
+	if (event.get_side () == Side::NONE)
 	{
-		herald_concept (Side::WHITE, event->get_concept (), 250ul);
-		herald_concept (Side::BLACK, event->get_concept (), 6750ul);
+		herald_concept (Side::WHITE, event.get_concept (), 250ul);
+		herald_concept (Side::BLACK, event.get_concept (), 6750ul);
 	}
-	else if (std::dynamic_pointer_cast<const Check> (event))
-		herald_concept (event->get_side ().get_opponent (),
-			event->get_concept (), 500ul);
+	else if (dynamic_cast<const Check*> (&event))
+		herald_concept (event.get_side ().get_opponent (),
+			event.get_concept (), 500ul);
 	else
-		herald_concept (event->get_side (), event->get_concept ());
+		herald_concept (event.get_side (), event.get_concept ());
 
 	// If it's a Loss, have the winning side celebrate their victory.
-	if (std::dynamic_pointer_cast<const Loss> (event))
+	if (dynamic_cast<const Loss*> (&event))
 	{
 		herald_concept (game->get_victor (), "win", 6500ul);
 
@@ -1048,10 +1051,7 @@ NGCGame::show_logbook (Message& message)
 				book << Game::get_logbook_heading (page)
 					<< std::endl << std::endl;
 			}
-			String description = entry.second->get_description ();
-			if (!description.empty ())
-				description.front () =
-					std::toupper (description.front ());
+			String description = entry.second->describe ();
 			book << Game::get_halfmove_prefix (halfmove)
 				<< description << std::endl << std::endl;
 			plain << Game::get_halfmove_prefix (halfmove)

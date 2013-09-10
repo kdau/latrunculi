@@ -669,7 +669,6 @@ NGCSquare::NGCSquare (const String& _name, const Object& _host)
 	  PERSISTENT (state, State::EMPTY),
 	  PERSISTENT (piece, Piece ()),
 	  PARAMETER (is_proxy, false),
-	  PARAMETER (scale, 1.0f),
 	  decal_fade (*this, &NGCSquare::decal_fade_step, "DecalFade"),
 	  PARAMETER (decal_offset, Vector ()),
 	  button_fade (*this, &NGCSquare::button_fade_step, "ButtonFade"),
@@ -709,12 +708,15 @@ NGCSquare::update_state (Message& message)
 	// If in a singleton state, empty the previous square in the state.
 	if (!singleton.empty ())
 	{
-		Object game ("TheGame"), old_singleton =
-			ScriptParamsLink::get_one_by_data (game, singleton)
-				.get_dest ();
-		if (old_singleton != Object::NONE)
+		Object game ("TheGame");
+		auto old_singleton = ScriptParamsLink::get_one_by_data
+			(game, singleton);
+		if (old_singleton.exists ())
+		{
 			GenericMessage::with_data ("UpdateState", State::EMPTY,
-				Piece ()).send (game, old_singleton);
+				Piece ()).send (game, old_singleton.get_dest ());
+			old_singleton.destroy ();
+		}
 		ScriptParamsLink::create (game, host (), singleton);
 	}
 
@@ -725,7 +727,7 @@ NGCSquare::update_state (Message& message)
 	return Message::HALT;
 }
 
-Rendered
+Bitmapped
 NGCSquare::get_decal () const
 {
 	return ScriptParamsLink::get_one_by_data (host (), "Decal").get_dest ();
@@ -734,7 +736,7 @@ NGCSquare::get_decal () const
 void
 NGCSquare::update_decal ()
 {
-	Rendered decal = get_decal ();
+	Bitmapped decal = get_decal ();
 
 	Piece display_piece = piece;
 	switch (state)
@@ -764,7 +766,8 @@ NGCSquare::update_decal ()
 	if (decal != Object::NONE)
 		decal.destroy ();
 
-	decal = Object::create (Object ("ChessDecal"));
+	decal = Object::start_create
+		(Object (is_proxy ? "ChessProxyDecal" : "ChessDecal"));
 	if (decal == Object::NONE)
 	{
 		mono () << "Error: could not create a decal." << std::endl;
@@ -773,20 +776,21 @@ NGCSquare::update_decal ()
 
 	ScriptParamsLink::create (host (), decal, "Decal");
 
+	decal.model = String ("decal-") +
+		(display_piece.is_valid () ? display_piece.get_code () : 'z');
+	mono () << "INFO: The decal started with bitmap color: " << decal.bitmap_color << std::endl; //FIXME FIXME TESTING
+	if (state == State::FRIENDLY_INERT)
+		decal.apply_lighting = true; // don't make it luminescent
+	else
+		decal.bitmap_color = ChessSet (display_piece.side).get_color (); //FIXME This property is not stored this way. Fix.
+	mono () << "INFO: It now has color: " << decal.bitmap_color << std::endl; //FIXME FIXME TESTING
+
 	Vector location = host ().get_location () + decal_offset,
-		rotation (0.0f, 0.0f, 180.0f + 90.0f * (is_proxy ? -1 : 1) *
+		rotation (0.0f, 0.0f, 180.0f + 90.0f * (is_proxy ? 1 : -1) *
 			get_facing_direction (display_piece.side));
 	decal.set_position (location, rotation);
 
-	if (scale != 1.0f)
-		decal.model_scale = { scale, scale, scale };
-
-	std::ostringstream texture;
-	texture << "obj\\txt16\\decal-"
-		<< (display_piece.is_valid () ? display_piece.get_code () : 'z')
-		<< (state == State::FRIENDLY_INERT
-			? 0 : ChessSet (display_piece.side).number);
-	decal.replacement_texture [0u] = texture.str ();
+	decal.finish_create ();
 
 	Time fade = Parameter<Time> (decal, "fade_time", { 500ul });
 	decal_fade.length = fade;
@@ -800,7 +804,7 @@ NGCSquare::decal_fade_step ()
 	if (decal == Object::NONE) return false;
 	bool fade_in = state != State::EMPTY;
 	decal.opacity = decal_fade.interpolate
-		(fade_in ? 0.0f : 1.0f, fade_in ? 1.0f : 0.0f);
+		(fade_in ? 0.0f : 0.75f, fade_in ? 0.75f : 0.0f);
 	return true;
 }
 
@@ -844,7 +848,7 @@ NGCSquare::update_button ()
 
 	std::ostringstream archetype_name;
 	archetype_name << "ChessButton" << ChessSet (side).number;
-	button = Object::create (Object (archetype_name.str ()));
+	button = Object::start_create (Object (archetype_name.str ()));
 	if (button == Object::NONE)
 	{
 		mono () << "Error: could not create a button." << std::endl;
@@ -857,8 +861,7 @@ NGCSquare::update_button ()
 	Vector location = host ().get_location () + button_offset;
 	button.set_position (location, rotation);
 
-	if (scale != 1.0f)
-		button.model_scale = { scale, scale, scale };
+	button.finish_create ();
 
 	Time fade = Parameter<Time> (button, "fade_time", { 500ul });
 	button_fade.length = fade;

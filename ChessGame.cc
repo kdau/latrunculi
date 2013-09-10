@@ -519,17 +519,17 @@ String
 Game::get_logbook_heading (unsigned page)
 {
 	return translate_format ("logbook_heading",
-		Side (Side::WHITE).get_name (Case::DATIVE).data (),
-		Side (Side::BLACK).get_name (Case::DATIVE).data (),
+		Side (Side::WHITE).get_name (Case::DATIVE),
+		Side (Side::BLACK).get_name (Case::DATIVE),
 		page);
 }
 
 String
 Game::get_halfmove_prefix (unsigned halfmove)
 {
-	return translate_format (
-		(halfmove % 2 == 0) ? "event_prefix_a" : "event_prefix_b",
-		halfmove / 2 + 1);
+	return translate_format ((halfmove % 2 == 0)
+			? "event_prefix_a" : "event_prefix_b",
+		(halfmove / 2 + 1));
 }
 
 

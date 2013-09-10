@@ -31,6 +31,9 @@ namespace Chess {
 
 typedef std::string String;
 
+// Modified long algebraic notation, created here for serialization of history.
+typedef String MLAN;
+
 enum class Case
 {
 	NOMINATIVE,
@@ -39,12 +42,8 @@ enum class Case
 	TRANSLATIVE
 };
 
-String translate_format (const String& format_msgid, ...); //FIXME Don't use printf.
-
-
-
-// Modified long algebraic notation, created here for serialization of history.
-typedef String MLAN;
+template <typename... Args>
+String translate_format (const String& msgid, Args... args);
 
 
 
@@ -68,7 +67,7 @@ struct Square
 	bool operator != (const Square&) const;
 
 	explicit Square (const String& code);
-	String get_code () const;
+	String get_code (bool upper = false) const;
 
 	enum class Color { NONE = -1, LIGHT, DARK };
 	Color get_color () const;
@@ -170,7 +169,7 @@ public:
 	virtual MLAN serialize () const = 0;
 	static Event::Ptr deserialize (const MLAN&, Side active_side);
 
-	virtual String get_description () const = 0;
+	virtual String describe () const = 0;
 	virtual String get_concept () const = 0;
 
 protected:
@@ -217,7 +216,7 @@ public:
 	virtual Side get_side () const;
 	Type get_type () const { return type; }
 
-	virtual String get_description () const;
+	virtual String describe () const;
 	virtual String get_concept () const;
 
 protected:
@@ -259,7 +258,7 @@ public:
 	virtual Side get_side () const;
 	Type get_type () const { return type; }
 
-	virtual String get_description () const;
+	virtual String describe () const;
 	virtual String get_concept () const;
 
 protected:
@@ -292,7 +291,7 @@ public:
 	Piece get_promoted_piece () const;
 
 	String get_uci_code () const;
-	virtual String get_description () const;
+	virtual String describe () const;
 	virtual String get_concept () const;
 
 protected:
@@ -323,7 +322,7 @@ public:
 	const Piece& get_captured_piece () const { return captured_piece; }
 	virtual Square get_captured_square () const;
 
-	virtual String get_description () const;
+	virtual String describe () const;
 
 protected:
 	virtual bool equals (const Event&) const;
@@ -342,7 +341,7 @@ public:
 
 	virtual Square get_captured_square () const;
 
-	virtual String get_description () const;
+	virtual String describe () const;
 
 protected:
 	virtual bool equals (const Event&) const;
@@ -389,7 +388,7 @@ public:
 	Square get_rook_from () const { return rook_from; }
 	Square get_rook_to () const { return rook_to; }
 
-	virtual String get_description () const;
+	virtual String describe () const;
 
 protected:
 	virtual bool equals (const Event&) const;
@@ -414,7 +413,7 @@ public:
 
 	virtual Side get_side () const;
 
-	virtual String get_description () const;
+	virtual String describe () const;
 	virtual String get_concept () const;
 
 protected:
@@ -430,7 +429,7 @@ public:
 
 	virtual Side get_side () const;
 
-	virtual String get_description () const;
+	virtual String describe () const;
 	virtual String get_concept () const;
 
 protected:

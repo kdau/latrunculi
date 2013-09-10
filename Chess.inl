@@ -25,6 +25,8 @@
 #ifndef CHESS_INL
 #define CHESS_INL
 
+#include <boost/format.hpp>
+
 
 
 namespace Thief {
@@ -40,6 +42,46 @@ template<> String Parameter<Chess::Side>::encode () const;
 
 
 namespace Chess {
+
+
+
+// String utilities
+
+inline String
+translate_format_step (boost::format& format)
+{
+	String result = format.str ();
+	if (!result.empty ())
+		result.front () = std::toupper (result.front ());
+	return result;
+}
+
+template <typename T, typename... Args>
+inline String
+translate_format_step (boost::format& format, T arg, Args... args)
+{
+	return translate_format_step (format % arg, args...);
+}
+
+template <typename... Args>
+inline String
+translate_format (const String& msgid, Args... args)
+{
+	try
+	{
+		boost::format format (translate (msgid));
+		format.exceptions (boost::io::all_error_bits
+			^ boost::io::too_many_args_bit); // allowed here
+		return translate_format_step (format, args...);
+	}
+	catch (std::exception& e)
+	{
+		Thief::mono << "Could not translate message \"" << msgid
+			<< "\" : " << e.what () << std::endl;
+	}
+	catch (...) {}
+	return String ();
+}
 
 
 

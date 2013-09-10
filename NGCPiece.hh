@@ -60,6 +60,7 @@ private:
 	Message::Result arrive_at_square (AIActionResultMessage&);
 	Persistent<Object> target_square;
 
+	bool is_biped () const;
 	Message::Result bow_to_king (TimerMessage&);
 	Message::Result celebrate (Message&);
 

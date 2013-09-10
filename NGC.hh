@@ -228,9 +228,8 @@ private:
 	Persistent<State> state;
 	Persistent<Piece> piece;
 	Parameter<bool> is_proxy;
-	Parameter<float> scale;
 
-	Rendered get_decal () const;
+	Bitmapped get_decal () const;
 	void update_decal ();
 	bool decal_fade_step ();
 	Transition decal_fade;

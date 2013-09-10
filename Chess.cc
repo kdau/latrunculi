@@ -19,8 +19,6 @@
  *****************************************************************************/
 
 #include "Chess.hh"
-#include <cstdarg> //FIXME Remove once translate_format is replaced.
-#include <cstdio> //FIXME Remove once translate_format is replaced.
 
 
 
@@ -77,19 +75,6 @@ namespace Chess {
 
 
 
-String
-translate_format (const String& format_msgid, ...)
-{
-	std::va_list va;
-	char result[1024];
-	va_start (va, format_msgid);
-	std::vsnprintf (result, 1024, translate (format_msgid).data (), va);
-	va_end (va);
-	return result;
-}
-
-
-
 // Square
 
 const Square
@@ -107,13 +92,13 @@ Square::Square (const String& code)
 }
 
 String
-Square::get_code () const
+Square::get_code (bool upper) const
 {
-	char code[3u] = "-\0";
+	char code [3u] = "-\0";
 	if (is_valid ())
 	{
-		code[0u] = char (file) + 'a';
-		code[1u] = char (rank) + '1';
+		code [0u] = char (file) + (upper ? 'A' : 'a');
+		code [1u] = char (rank) + '1';
 	}
 	return code;
 }
@@ -391,7 +376,7 @@ Loss::get_side () const
 	{ return side; }
 
 String
-Loss::get_description () const
+Loss::describe () const
 {
 	const char* msgid = nullptr;
 	switch (type)
@@ -403,8 +388,8 @@ Loss::get_description () const
 	}
 
 	return translate_format (msgid,
-		side.get_name (Case::NOMINATIVE).data (),
-		side.get_opponent ().get_name (Case::DATIVE).data ());
+		side.get_name (Case::NOMINATIVE),
+		side.get_opponent ().get_name (Case::DATIVE));
 }
 
 String
@@ -486,7 +471,7 @@ Draw::get_side () const
 }
 
 String
-Draw::get_description () const
+Draw::describe () const
 {
 	const char* msgid = nullptr;
 	switch (type)
@@ -501,8 +486,8 @@ Draw::get_description () const
 	}
 
 	return translate_format (msgid,
-		Side (Side::WHITE).get_name (Case::NOMINATIVE).data (),
-		Side (Side::BLACK).get_name (Case::NOMINATIVE).data ());
+		Side (Side::WHITE).get_name (Case::NOMINATIVE),
+		Side (Side::BLACK).get_name (Case::NOMINATIVE));
 }
 
 String
@@ -583,15 +568,14 @@ Move::get_uci_code () const
 }
 
 String
-Move::get_description () const
+Move::describe () const
 {
-	return translate_format (
-		get_promoted_piece ().is_valid ()
+	return translate_format (get_promoted_piece ().is_valid ()
 			? "move_empty_promotion" : "move_empty",
-		piece.get_name (Case::NOMINATIVE).data (),
-		from.get_code ().data (),
-		to.get_code ().data (),
-		get_promoted_piece ().get_name (Case::TRANSLATIVE).data ());
+		piece.get_name (Case::NOMINATIVE),
+		from.get_code (),
+		to.get_code (),
+		get_promoted_piece ().get_name (Case::TRANSLATIVE));
 }
 
 String
@@ -662,16 +646,15 @@ Capture::get_captured_square () const
 }
 
 String
-Capture::get_description () const
+Capture::describe () const
 {
-	return translate_format (
-		get_promoted_piece ().is_valid ()
+	return translate_format (get_promoted_piece ().is_valid ()
 			? "move_capture_promotion" : "move_capture",
-		get_piece ().get_name (Case::NOMINATIVE).data (),
-		get_from ().get_code ().data (),
-		get_captured_piece ().get_name (Case::ACCUSATIVE).data (),
-		get_to ().get_code ().data (),
-		get_promoted_piece ().get_name (Case::TRANSLATIVE).data ());
+		get_piece ().get_name (Case::NOMINATIVE),
+		get_from ().get_code (),
+		get_captured_piece ().get_name (Case::ACCUSATIVE),
+		get_to ().get_code (),
+		get_promoted_piece ().get_name (Case::TRANSLATIVE));
 }
 
 bool
@@ -729,14 +712,14 @@ EnPassantCapture::get_captured_square () const
 }
 
 String
-EnPassantCapture::get_description () const
+EnPassantCapture::describe () const
 {
 	return translate_format ("move_en_passant",
-		get_piece ().get_name (Case::NOMINATIVE).data (),
-		get_from ().get_code ().data (),
-		get_captured_piece ().get_name (Case::ACCUSATIVE).data (),
-		get_captured_square ().get_code ().data (),
-		get_to ().get_code ().data ());
+		get_piece ().get_name (Case::NOMINATIVE),
+		get_from ().get_code (),
+		get_captured_piece ().get_name (Case::ACCUSATIVE),
+		get_captured_square ().get_code (),
+		get_to ().get_code ());
 }
 
 bool
@@ -833,11 +816,11 @@ Castling::serialize () const
 }
 
 String
-Castling::get_description () const
+Castling::describe () const
 {
-	return translate_format
-		((type == Type::KINGSIDE) ? "move_castle_ks" : "move_castle_qs",
-		 get_side ().get_name (Case::NOMINATIVE).data ());
+	return translate_format ((type == Type::KINGSIDE)
+			? "move_castle_ks" : "move_castle_qs",
+		 get_side ().get_name (Case::NOMINATIVE));
 }
 
 bool
@@ -877,7 +860,7 @@ StartGame::equals (const Event&) const
 }
 
 String
-StartGame::get_description () const
+StartGame::describe () const
 {
 	return String ();
 }
@@ -919,10 +902,9 @@ Check::equals (const Event& _rhs) const
 }
 
 String
-Check::get_description () const
+Check::describe () const
 {
-	return translate_format ("in_check",
-		side.get_name (Case::NOMINATIVE).data ());
+	return translate_format ("in_check", side.get_name (Case::NOMINATIVE));
 }
 
 String

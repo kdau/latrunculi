@@ -275,18 +275,43 @@ NGCPiece::arrive_at_square (AIActionResultMessage& message)
 	return Message::HALT;
 }
 
+bool
+NGCPiece::is_biped () const
+{
+	switch (host_as<AI> ().creature_type)
+	{
+	case AI::CreatureType::HUMANOID:
+	case AI::CreatureType::BUGBEAST:
+	case AI::CreatureType::CRAYMAN:
+	case AI::CreatureType::CONSTANTINE: // ???
+	case AI::CreatureType::APPARITION: // ???
+	case AI::CreatureType::ZOMBIE:
+	case AI::CreatureType::CUTTY:
+	case AI::CreatureType::AVATAR:
+		return true;
+	default:
+		return false;
+	}
+}
+
 Message::Result
 NGCPiece::bow_to_king (TimerMessage&)
 {
-	host_as<AI> ().play_motion ("humsalute3"); // (pseudo-)bipeds only
-	start_timer ("Reposition", 3000ul, false);
+	if (is_biped ())
+	{
+		host_as<AI> ().play_motion ("humsalute3");
+		start_timer ("Reposition", 3000ul, false);
+	}
+	else
+		GenericMessage ("Reposition").send (host (), host ());
 	return Message::HALT;
 }
 
 Message::Result
 NGCPiece::celebrate (Message&)
 {
-	host_as<AI> ().play_motion ("humairpt2"); // (pseudo-)bipeds only
+	if (is_biped ())
+		host_as<AI> ().play_motion ("humairpt2");
 	return Message::HALT;
 }
 
@@ -384,13 +409,22 @@ NGCPiece::finish_attack ()
 Message::Result
 NGCPiece::become_victim (Message& message)
 {
-	host ().remove_metaprop (Object ("M-ChessAlive"));
-	host ().add_metaprop (Object ("M-ChessAttackee"));
+	// Don't set the attacker variable until it's official (be_attacked).
+	RangedCombatant _attacker = message.get_from (),
+		self = host_as<RangedCombatant> ();
 
-	create_awareness (message.get_from (), message.get_time ());
-	host_as<AI> ().face_object (message.get_from ());
+	self.remove_metaprop (Object ("M-ChessAlive"));
+	self.add_metaprop (Object ("M-ChessVictim"));
 
-	// Don't set attacker variable until it's official.
+	// The combination of a ranged attacker and melee victim results in
+	// awkward attack sequences. In this case, don't let the victim fight
+	// back until they have been hit.
+	if (_attacker.is_ranged_combatant () && !self.is_ranged_combatant ())
+		self.non_hostile = Combatant::NonHostile::UNTIL_DAMAGED;
+
+	create_awareness (_attacker, message.get_time ());
+	host_as<AI> ().face_object (_attacker);
+
 	return Message::HALT;
 }
 
@@ -467,8 +501,8 @@ NGCPiece::start_burial (TimerMessage&)
 		team = Team (QuestVar ("chess_corpse_team").get ());
 
 	// Create a smoke puff at the site of death.
-	Object puff_type = Object ("ChessBurialPuff"),
-		puff = Object::create (puff_type);
+	Object puff_archetype = Object ("ChessBurialPuff"),
+		puff = Object::create (puff_archetype);
 	puff.set_location (host ().get_location ());
 
 	// Create a smoke puff at the gravesite, if any.
@@ -477,7 +511,7 @@ NGCPiece::start_burial (TimerMessage&)
 	if (grave != Object::NONE)
 	{
 		ScriptParamsLink::create (host (), grave, "Grave");
-		puff = Object::create (puff_type);
+		puff = Object::create (puff_archetype);
 		puff.set_location (grave.get_location ());
 	}
 
@@ -584,14 +618,14 @@ NGCPiece::finish_promotion (TimerMessage&)
 
 
 
-// Heralds
+// Heralds (Only bipeds are supported as heralds.)
 
 Message::Result
 NGCPiece::herald_concept (Message& message)
 {
 	String concept = message.get_data (Message::DATA1, String ());
 
-	// Play the trumpeting motion (bipeds only).
+	// Play the trumpeting motion.
 	host_as<AI> ().play_motion ("humgulp");
 
 	// Play the announcement sound (fanfare and/or speech).
@@ -656,19 +690,19 @@ NGCPiece::finish_subtitle (TimerMessage& message)
 
 
 
-// "Player"s
+// "Player"s (Only bipeds are supported as opponent "player"s.)
 
 Message::Result
 NGCPiece::start_thinking (Message&)
 {
-	host_as<AI> ().play_motion ("bh112003"); // bipeds only
+	host_as<AI> ().play_motion ("bh112003");
 	return Message::HALT;
 }
 
 Message::Result
 NGCPiece::finish_thinking (Message&)
 {
-	host_as<AI> ().play_motion ("bh112550"); // bipeds only
+	host_as<AI> ().play_motion ("bh112550");
 	return Message::HALT;
 }
 
