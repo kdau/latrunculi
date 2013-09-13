@@ -25,8 +25,6 @@
 #ifndef CHESS_INL
 #define CHESS_INL
 
-#include <boost/format.hpp>
-
 
 
 namespace Thief {
@@ -76,8 +74,8 @@ translate_format (const String& msgid, Args... args)
 	}
 	catch (std::exception& e)
 	{
-		Thief::mono << "Could not translate message \"" << msgid
-			<< "\" : " << e.what () << std::endl;
+		Thief::mono.log (boost::format ("WARNING: Could not translate "
+			"message \"%s\": %s.") % msgid % e.what ());
 	}
 	catch (...) {}
 	return String ();

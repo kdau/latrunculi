@@ -499,7 +499,7 @@ Game::Game (std::istream& record)
 		}
 	}
 	if (get_fullmove_number () != event_fullmove)
-		Thief::mono << "Chess::Game: Warning: The history is not"
+		Thief::mono << "WARNING: Chess::Game: The history is not"
 			"consistent with the recorded position." << std::endl;
 
 	update_possible_moves ();

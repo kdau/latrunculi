@@ -90,6 +90,7 @@ NGCPiece::NGCPiece (const String& _name, const Object& _host)
 void
 NGCPiece::initialize ()
 {
+	Script::initialize ();
 	game = Object ("TheGame");
 	ObjectProperty::subscribe ("Speech", host ());
 }
@@ -311,7 +312,8 @@ Message::Result
 NGCPiece::celebrate (Message&)
 {
 	if (is_biped ())
-		host_as<AI> ().play_motion ("humairpt2");
+		host_as<AI> ().play_motion (Thief::Engine::random_int (0, 1)
+			? "humairpt2" : "humpshbt1");
 	return Message::HALT;
 }
 
@@ -471,7 +473,7 @@ NGCPiece::force_death (TimerMessage&)
 Message::Result
 NGCPiece::check_ai_mode (AIModeMessage& message)
 {
-        if (message.get_new_mode () == AI::Mode::DEAD)
+        if (message.new_mode == AI::Mode::DEAD)
 		die (message);
 	return Message::HALT;
 }
@@ -626,11 +628,11 @@ NGCPiece::herald_concept (Message& message)
 	String concept = message.get_data (Message::DATA1, String ());
 
 	// Play the trumpeting motion.
-	host_as<AI> ().play_motion ("humgulp");
+	host_as<AI> ().play_motion ("hrldhorn");
 
 	// Play the announcement sound (fanfare and/or speech).
-	std::ostringstream tags;
-	tags << "ChessSet set" << set << ", ChessConcept " << concept;
+	boost::format tags ("ChessSet set%||, ChessConcept %||");
+	tags % set % concept;
 	SoundSchema::play_by_tags (tags.str (), SoundSchema::Tagged::ON_OBJECT,
 		host ());
 
@@ -643,8 +645,7 @@ NGCPiece::subtitle_speech (PropertyMessage& message)
 	AI ai = host_as<AI> ();
 
 	// Confirm that the relevant property has changed.
-	if (message.get_object () != ai ||
-	    message.get_property () != Property ("Speech"))
+	if (message.object != ai || message.property != Property ("Speech"))
 		return Message::CONTINUE;
 
 	// Confirm that the speech schema is valid.

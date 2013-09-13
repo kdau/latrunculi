@@ -113,9 +113,9 @@ Engine::start_calculation ()
 	static const Thief::Time comp_time[] = { 2500ul, 5000ul, 7500ul };
 	static const unsigned depth[] = { 1u, 4u, 9u };
 
-	std::stringstream go_command;
-	go_command << "go depth " << depth [size_t (difficulty)]
-		<< " movetime " << comp_time [size_t (difficulty)];
+	boost::format go_command ("go depth %|| movetime %||");
+	go_command % depth [size_t (difficulty)];
+	go_command % comp_time [size_t (difficulty)];
 
 	wait_until_ready ();
 	write_command (go_command.str ());
@@ -215,7 +215,7 @@ Engine::launch (const String& program_path)
 	::CloseHandle (proc_info.hThread);
 
 	if (debug)
-		Thief::mono << "Chess::Engine: Info: The engine has been "
+		Thief::mono << "INFO: Chess::Engine: The engine has been "
 			"loaded from \"" << program_path << "\"." << std::endl;
 
 	return;
@@ -264,10 +264,10 @@ Engine::read_replies (const String& desired_reply)
 			full_reply.erase (0u, pos + 1u);
 
 			if (field == "name")
-				Thief::mono << "Chess::Engine: Info: The engine "
+				Thief::mono << "INFO: Chess::Engine: The engine "
 					"is " << full_reply << "." << std::endl;
 			else if (field == "author")
-				Thief::mono << "Chess::Engine: Info: The engine "
+				Thief::mono << "INFO: Chess::Engine: The engine "
 					"was written by " << full_reply << "."
 					<< std::endl;
 		}

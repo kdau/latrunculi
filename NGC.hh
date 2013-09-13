@@ -64,7 +64,7 @@ class HUDMessage : public HUDElement
 public:
 	typedef std::unique_ptr<HUDMessage> Ptr;
 
-	HUDMessage (HUD::ZIndex priority = 20);
+	HUDMessage (ZIndex priority = 20);
 	virtual ~HUDMessage ();
 
 	bool enabled;

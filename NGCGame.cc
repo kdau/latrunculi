@@ -117,6 +117,7 @@ NGCGame::get_piece_at (const Object& square)
 void
 NGCGame::initialize ()
 {
+	Script::initialize ();
 	bool resume_computing = false;
 
 	if (record.exists ()) // existing game
@@ -233,8 +234,7 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 		Object square = Object::start_create (archetype);
 		if (square == Object::NONE)
 		{
-			mono () << "Error: could not create a square."
-				<< std::endl;
+			log (Log::ERROR, "Could not create a square.");
 			continue;
 		}
 
@@ -278,7 +278,7 @@ NGCGame::create_piece (const Object& square, const Piece& _piece,
 	AI piece = Object::start_create (archetype);
 	if (piece == Object::NONE)
 	{
-		mono () << "Error: could not create a piece." << std::endl;
+		log (Log::ERROR, "Could not create a piece.");
 		return Object::NONE;
 	}
 
@@ -588,8 +588,7 @@ NGCGame::finish_computing ()
 void
 NGCGame::engine_failure (const String& where, const String& what)
 {
-	mono () << "Error: Engine failure in " << where << ": " << what
-		<< std::endl;
+	log (Log::ERROR, "Engine failure in %||: %||.", where, what);
 
 	engine.reset ();
 	if (state == State::COMPUTING)
@@ -875,6 +874,8 @@ NGCGame::start_endgame ()
 
 	update_sim ();
 	update_interface ();
+	good_check->enabled = false;
+	evil_check->enabled = false;
 
 	// Stop the clocks.
 	for (auto& clock : ScriptParamsLink::get_all_by_data (host (), "Clock"))
@@ -1065,8 +1066,7 @@ NGCGame::show_logbook (Message& message)
 	}
 	catch (std::exception& e)
 	{
-		mono () << "Warning: Failed to prepare logbook: " << e.what ()
-			<< std::endl;
+		log (Log::WARNING, "Failed to prepare logbook: %||.", e.what ());
 		Mission::show_text (Chess::translate ("logbook_problem"));
 		return Message::ERROR;
 	}
@@ -1080,8 +1080,7 @@ NGCGame::show_logbook (Message& message)
 void
 NGCGame::script_failure (const String& where, const String& what)
 {
-	mono () << "Error: Script failure in " << where << ": " << what
-		<< std::endl;
+	log (Log::ERROR, "Script failure in %||: %||.", where, what);
 
 	game.reset ();
 	state = State::NONE;

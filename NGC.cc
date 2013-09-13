@@ -138,7 +138,7 @@ HUDMessage::PADDING = 12;
 const CanvasPoint
 HUDMessage::DEFAULT_OFFSET = { 0, 2 * PADDING };
 
-HUDMessage::HUDMessage (HUD::ZIndex priority)
+HUDMessage::HUDMessage (ZIndex priority)
 	: HUDElement (), enabled (true), position (Position::TOPIC),
 	  offset (DEFAULT_OFFSET)
 {
@@ -264,6 +264,7 @@ NGCTitled::NGCTitled (const String& _name, const Object& _host,
 void
 NGCTitled::initialize ()
 {
+	Script::initialize ();
 	title.reset (new HUDMessage ());
 	title->enabled = false;
 	title->topic = host ();
@@ -308,6 +309,7 @@ NGCIntro::NGCIntro (const String& _name, const Object& _host)
 void
 NGCIntro::initialize ()
 {
+	Script::initialize ();
 	host_as<Conversation> ().subscribe ();
 }
 
@@ -361,7 +363,7 @@ NGCIntro::start_briefing (Message&)
 Message::Result
 NGCIntro::finish_briefing (ConversationMessage& message)
 {
-	if (message.get_conversation () == host ())
+	if (message.conversation == host ())
 		Objective (0).set_state (Objective::State::COMPLETE);
 	return Message::CONTINUE;
 }
@@ -470,7 +472,7 @@ NGCScenario::enter_environment (Message&)
 	// Close the false wall again, quickly.
 	TranslatingDoor wall = ScriptParamsLink::get_one_by_data
 		(host (), "Wall").get_dest ();
-	wall.base_speed = wall.base_speed * 3.0f;
+	wall.speed = wall.speed * 3.0f;
 	wall.close_door ();
 
 	// Start the briefing.
@@ -628,7 +630,7 @@ NGCFlag::answered_yes (FrobMessage&)
 Message::Result
 NGCFlag::answered_no (ContainmentMessage& message)
 {
-	if (message.get_event () == ContainmentMessage::REMOVE)
+	if (message.event == ContainmentMessage::REMOVE)
 		end_question ();
 	return Message::HALT;
 }
@@ -770,7 +772,7 @@ NGCSquare::update_decal ()
 		(Object (is_proxy ? "ChessProxyDecal" : "ChessDecal"));
 	if (decal == Object::NONE)
 	{
-		mono () << "Error: could not create a decal." << std::endl;
+		log (Log::ERROR, "Could not create a decal.");
 		return;
 	}
 
@@ -778,12 +780,10 @@ NGCSquare::update_decal ()
 
 	decal.model = String ("decal-") +
 		(display_piece.is_valid () ? display_piece.get_code () : 'z');
-	mono () << "INFO: The decal started with bitmap color: " << decal.bitmap_color << std::endl; //FIXME FIXME TESTING
 	if (state == State::FRIENDLY_INERT)
 		decal.apply_lighting = true; // don't make it luminescent
 	else
 		decal.bitmap_color = ChessSet (display_piece.side).get_color (); //FIXME This property is not stored this way. Fix.
-	mono () << "INFO: It now has color: " << decal.bitmap_color << std::endl; //FIXME FIXME TESTING
 
 	Vector location = host ().get_location () + decal_offset,
 		rotation (0.0f, 0.0f, 180.0f + 90.0f * (is_proxy ? 1 : -1) *
@@ -851,7 +851,7 @@ NGCSquare::update_button ()
 	button = Object::start_create (Object (archetype_name.str ()));
 	if (button == Object::NONE)
 	{
-		mono () << "Error: could not create a button." << std::endl;
+		log (Log::ERROR, "Could not create a button.");
 		return;
 	}
 
