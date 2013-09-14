@@ -66,6 +66,9 @@ NGCGame::NGCGame (const String& _name, const Object& _host)
 	listen_message ("Draw", &NGCGame::record_draw);
 	listen_message ("FinishEndgame", &NGCGame::finish_endgame);
 
+	listen_message ("DeclareWar", &NGCGame::declare_war);
+	listen_timer ("CheckWar", &NGCGame::check_war);
+
 	listen_timer ("EndAnnouncement", &NGCGame::end_announcement);
 
 	listen_message ("TurnOn", &NGCGame::show_logbook);
@@ -252,6 +255,9 @@ NGCGame::arrange_board (const Object& origin, bool proxy)
 			+ rank_offset * rank + file_offset * file;
 		square.set_position (location, origin_rotation);
 
+		Parameter<float> (square, "luminance_mult") =
+			float (luminance_mult);
+
 		square.finish_create ();
 
 		Piece _piece = game->get_piece_at (_square);
@@ -386,6 +392,12 @@ NGCGame::update_interface ()
 	for (auto& flag : ScriptParamsLink::get_all_by_data
 				(host (), "ExitFlag"))
 		Rendered (flag.get_dest ()).render_type = can_exit
+			? Rendered::RenderType::NORMAL
+			: Rendered::RenderType::NONE;
+
+	for (auto& flag : ScriptParamsLink::get_all_by_data
+				(host (), "WarFlag"))
+		Rendered (flag.get_dest ()).render_type = can_resign
 			? Rendered::RenderType::NORMAL
 			: Rendered::RenderType::NONE;
 
@@ -927,6 +939,103 @@ NGCGame::finish_endgame (Message& message)
 	objective.set_visible (true);
 	objective.set_state ((objective.number == 0)
 		? Objective::State::COMPLETE : Objective::State::FAILED);
+	return Message::HALT;
+}
+
+Message::Result
+NGCGame::declare_war (Message&)
+{
+	// A fun easter egg that opens up all-out hostility between the sides.
+
+	// Suspend regular chess play.
+	if (!game) return Message::ERROR;
+	state = State::MOVING;
+	update_interface ();
+
+	// Enable across-the-board hostility.
+	bool rand = Thief::Engine::random_int (0, 1);
+	Object white_mp (rand ? "M-ChessAttacker" : "M-ChessVictim"),
+		black_mp (rand ? "M-ChessVictim" : "M-ChessAttacker"),
+		alive_mp ("M-ChessAlive");
+	for (auto square = Square::BEGIN; square.is_valid (); ++square)
+	{
+		AI combatant = get_piece_at (square);
+		if (combatant == Object::NONE) continue;
+		Side side = game->get_piece_at (square).side;
+
+		// Prepare for battle.
+		combatant.remove_metaprop (alive_mp);
+		combatant.add_metaprop ((side == Side::WHITE) ? white_mp
+			: (side == Side::BLACK) ? black_mp : alive_mp);
+
+		// Ensure that the enemy is noticed.
+		combatant.vision = AI::Rating::WELL_ABOVE;
+		combatant.hearing = AI::Rating::WELL_ABOVE;
+		combatant.investigates = true;
+	}
+
+	// In case the visibility conditions are poor, attract attention.
+	SoundSchema ("flashbomb_exp").play (host ());
+
+	// Start periodic checks for the winning side.
+	start_timer ("CheckWar", 500ul, true);
+
+	return Message::HALT;
+}
+
+Message::Result
+NGCGame::check_war (TimerMessage&)
+{
+	// Count the surviving pieces.
+	size_t white_alive = 0u, black_alive = 0u;
+	for (auto square = Square::BEGIN; square.is_valid (); ++square)
+	{
+		Damageable combatant = get_piece_at (square);
+		if (combatant == Object::NONE || combatant.hit_points <= 0)
+			continue;
+
+		Side side = game->get_piece_at (square).side;
+		switch (side.value)
+		{
+		case Side::WHITE: ++white_alive; break;
+		case Side::BLACK: ++black_alive; break;
+		default: break;
+		}
+	}
+
+	// Determine a winner, if any.
+	if (white_alive == 0u && black_alive == 0u)
+		game->record_draw (Draw::Type::BY_AGREEMENT);
+	else if (white_alive == 0u)
+		game->record_war_victory (Side::BLACK);
+	else if (black_alive == 0u)
+		game->record_war_victory (Side::WHITE);
+	else // The war is ongoing.
+	{
+		size_t good_alive = (good_side == Side::WHITE)
+				? white_alive : black_alive,
+			evil_alive = (evil_side == Side::WHITE)
+				? white_alive : black_alive;
+		good_check->enabled = good_alive < 3u;
+		evil_check->enabled = evil_alive < 3u;
+		return Message::HALT;
+	}
+
+	// Stand down the survivors.
+	for (auto square = Square::BEGIN; square.is_valid (); ++square)
+	{
+		AI combatant = get_piece_at (square);
+		if (combatant == Object::NONE) continue;
+
+		combatant.remove_metaprop (Object ("M-ChessAttacker"));
+		combatant.remove_metaprop (Object ("M-ChessVictim"));
+		combatant.add_metaprop (Object ("M-ChessAlive"));
+		combatant.investigates = false;
+		combatant.clear_alertness ();
+		combatant.send_signal ("FaceEnemy");
+	}
+
+	start_endgame ();
 	return Message::HALT;
 }
 

@@ -673,6 +673,7 @@ NGCSquare::NGCSquare (const String& _name, const Object& _host)
 	  PARAMETER (is_proxy, false),
 	  decal_fade (*this, &NGCSquare::decal_fade_step, "DecalFade"),
 	  PARAMETER (decal_offset, Vector ()),
+	  PARAMETER (luminance_mult, 1.0f),
 	  button_fade (*this, &NGCSquare::button_fade_step, "ButtonFade"),
 	  PARAMETER (button_offset, Vector ())
 {
@@ -780,10 +781,16 @@ NGCSquare::update_decal ()
 
 	decal.model = String ("decal-") +
 		(display_piece.is_valid () ? display_piece.get_code () : 'z');
+
 	if (state == State::FRIENDLY_INERT)
-		decal.apply_lighting = true; // don't make it luminescent
+		decal.bitmap_color = Color (0x606060);
 	else
-		decal.bitmap_color = ChessSet (display_piece.side).get_color (); //FIXME This property is not stored this way. Fix.
+	{
+		LabColor decal_color = ChessSet (display_piece.side).get_color ();
+		decal_color.L *= std::max (0.8f, std::min (1.2f,
+			float (luminance_mult)));
+		decal.bitmap_color = decal_color;
+	}
 
 	Vector location = host ().get_location () + decal_offset,
 		rotation (0.0f, 0.0f, 180.0f + 90.0f * (is_proxy ? 1 : -1) *

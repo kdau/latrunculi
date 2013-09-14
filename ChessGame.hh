@@ -122,6 +122,7 @@ public:
 	virtual void make_move (const Move::Ptr&);
 	void record_loss (Loss::Type, Side);
 	void record_draw (Draw::Type);
+	void record_war_victory (Side victor); // for easter egg
 
 private:
 	void record_event (const Event::ConstPtr&);

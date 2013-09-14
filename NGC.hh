@@ -234,6 +234,7 @@ private:
 	bool decal_fade_step ();
 	Transition decal_fade;
 	Parameter<Vector> decal_offset;
+	Parameter<float> luminance_mult;
 
 	Interactive get_button () const;
 	void update_button ();

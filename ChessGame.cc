@@ -587,7 +587,7 @@ void
 Game::make_move (const Move::Ptr& move)
 {
 	if (result != Result::ONGOING)
-		throw std::runtime_error ("game already ended");
+		throw std::runtime_error ("cannot move in a completed game");
 	if (!move)
 		throw std::runtime_error ("no move specified");
 
@@ -612,7 +612,7 @@ void
 Game::record_loss (Loss::Type type, Side side)
 {
 	if (result != Result::ONGOING)
-		throw std::runtime_error ("game already ended");
+		throw std::runtime_error ("cannot lose a completed game");
 
 	switch (type)
 	{
@@ -634,10 +634,21 @@ Game::record_loss (Loss::Type type, Side side)
 }
 
 void
+Game::record_war_victory (Side _victor)
+{
+	if (result != Result::ONGOING)
+		throw std::runtime_error ("cannot lose a completed game");
+
+	record_event (std::make_shared<Loss> (Loss::Type::CHECKMATE,
+		_victor.get_opponent ()));
+	end_game (Result::WON, _victor);
+}
+
+void
 Game::record_draw (Draw::Type type)
 {
 	if (result != Result::ONGOING)
-		throw std::runtime_error ("game already ended");
+		throw std::runtime_error ("cannot draw a completed game");
 
 	switch (type)
 	{

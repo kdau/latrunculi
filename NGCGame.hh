@@ -108,6 +108,9 @@ private:
 	void start_endgame ();
 	Message::Result finish_endgame (Message&);
 
+	Message::Result declare_war (Message&);
+	Message::Result check_war (TimerMessage&);
+
 	// Announcements
 
 	void announce_event (const Event&);
