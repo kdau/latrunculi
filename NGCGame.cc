@@ -978,7 +978,7 @@ NGCGame::declare_war (Message&)
 	SoundSchema ("flashbomb_exp").play (host ());
 
 	// Start periodic checks for the winning side.
-	start_timer ("CheckWar", 500ul, true);
+	start_timer ("CheckWar", 250ul, true);
 
 	return Message::HALT;
 }
@@ -986,6 +986,9 @@ NGCGame::declare_war (Message&)
 Message::Result
 NGCGame::check_war (TimerMessage&)
 {
+	if (!game) return Message::ERROR;
+	if (game->get_result () != Game::Result::ONGOING) return Message::HALT;
+
 	// Count the surviving pieces.
 	size_t white_alive = 0u, black_alive = 0u;
 	for (auto square = Square::BEGIN; square.is_valid (); ++square)
@@ -1003,13 +1006,13 @@ NGCGame::check_war (TimerMessage&)
 		}
 	}
 
-	// Determine a winner, if any.
+	// Determine the outcome, if any.
 	if (white_alive == 0u && black_alive == 0u)
-		game->record_draw (Draw::Type::BY_AGREEMENT);
+		game->record_war_result (Side::NONE);
 	else if (white_alive == 0u)
-		game->record_war_victory (Side::BLACK);
+		game->record_war_result (Side::BLACK);
 	else if (black_alive == 0u)
-		game->record_war_victory (Side::WHITE);
+		game->record_war_result (Side::WHITE);
 	else // The war is ongoing.
 	{
 		size_t good_alive = (good_side == Side::WHITE)

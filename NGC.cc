@@ -378,7 +378,7 @@ NGCScenario::NGCScenario (const String& _name, const Object& _host)
 		1000ul, Curve::LINEAR, "fade_time", "fade_curve"),
 	  PARAMETER (mission, 0),
 	  PARAMETER (chess_set, 0),
-	  PERSISTENT (entered, false)
+	  PERSISTENT (state, State::NONE)
 {
 	listen_message ("FrobWorldEnd", &NGCScenario::select);
 	listen_message ("Disable", &NGCScenario::disable);
@@ -403,6 +403,7 @@ Message::Result
 NGCScenario::select (FrobMessage& message)
 {
 	// Actually choose the scenario.
+	state = State::SELECTED;
 	Mission::set_next (mission);
 
 	// Notify NGCIntro.
@@ -463,22 +464,37 @@ NGCScenario::disable_step ()
 Message::Result
 NGCScenario::enter_environment (Message&)
 {
-	// Only proceed once.
-	if (entered)
-		return Message::HALT;
-	else
-		entered = true;
+	if (state == State::NONE)
+		return Message::ERROR; // ???
 
-	// Close the false wall again, quickly.
-	TranslatingDoor wall = ScriptParamsLink::get_one_by_data
-		(host (), "Wall").get_dest ();
-	wall.speed = wall.speed * 3.0f;
-	wall.close_door ();
+	if (state == State::BRIEFING)
+		return Message::HALT; // already done
 
-	// Start the briefing.
-	Object intro = ScriptParamsLink::get_one_by_data
-		(host (), "Scenario", true).get_dest ();
-	GenericMessage ("StartBriefing").send (host (), intro);
+	if (state == State::SELECTED)
+	{
+		// Close the false wall again, quickly.
+		TranslatingDoor wall = ScriptParamsLink::get_one_by_data
+			(host (), "Wall").get_dest ();
+		wall.speed = wall.speed * 3.0f;
+		wall.close_door ();
+
+		state = State::ENTERED;
+		if (mission == 22) // Wait for a separate briefing trigger.
+			return Message::HALT;
+	}
+
+	if (state == State::ENTERED)
+	{
+		// 22's briefing area is not designed for its herald to move.
+		if (mission == 22)
+			Object ("BeforePlayer").destroy ();
+
+		// Start the briefing now.
+		state = State::BRIEFING;
+		Object intro = ScriptParamsLink::get_one_by_data
+			(host (), "Scenario", true).get_dest ();
+		GenericMessage ("StartBriefing").send (host (), intro);
+	}
 
 	return Message::HALT;
 }
@@ -593,6 +609,8 @@ NGCFlag::NGCFlag (const String& _name, const Object& _host)
 Message::Result
 NGCFlag::ask_question (FrobMessage&)
 {
+	SoundSchema ("bow_begin").play_ambient ();
+
 	orig_loc = host ().get_location ();
 	orig_rot = host ().get_rotation ();
 
@@ -621,6 +639,7 @@ NGCFlag::intercept_deselect (Message&)
 Message::Result
 NGCFlag::answered_yes (FrobMessage&)
 {
+	SoundSchema ("pickup_gem").play_ambient ();
 	GenericMessage (message_name->data ()).broadcast
 		(host (), "ControlDevice");
 	end_question ();
@@ -631,7 +650,10 @@ Message::Result
 NGCFlag::answered_no (ContainmentMessage& message)
 {
 	if (message.event == ContainmentMessage::REMOVE)
+	{
+		SoundSchema ("bow_abort").play_ambient ();
 		end_question ();
+	}
 	return Message::HALT;
 }
 

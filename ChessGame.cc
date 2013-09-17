@@ -634,17 +634,6 @@ Game::record_loss (Loss::Type type, Side side)
 }
 
 void
-Game::record_war_victory (Side _victor)
-{
-	if (result != Result::ONGOING)
-		throw std::runtime_error ("cannot lose a completed game");
-
-	record_event (std::make_shared<Loss> (Loss::Type::CHECKMATE,
-		_victor.get_opponent ()));
-	end_game (Result::WON, _victor);
-}
-
-void
 Game::record_draw (Draw::Type type)
 {
 	if (result != Result::ONGOING)
@@ -675,6 +664,25 @@ Game::record_draw (Draw::Type type)
 
 	record_event (std::make_shared<Draw> (type));
 	end_game (Result::DRAWN, Side::NONE);
+}
+
+void
+Game::record_war_result (Side _victor)
+{
+	if (result != Result::ONGOING)
+		throw std::runtime_error ("cannot complete a completed war");
+
+	if (_victor == Side::NONE)
+	{
+		record_event (std::make_shared<Draw> (Draw::Type::DEAD_POSITION));
+		end_game (Result::DRAWN, Side::NONE);
+	}
+	else
+	{
+		record_event (std::make_shared<Loss> (Loss::Type::CHECKMATE,
+			_victor.get_opponent ()));
+		end_game (Result::WON, _victor);
+	}
 }
 
 void

@@ -151,7 +151,9 @@ private:
 	Message::Result enter_environment (Message&);
 
 	Parameter<int> mission, chess_set;
-	Persistent<bool> entered;
+
+	enum class State { NONE, SELECTED, ENTERED, BRIEFING };
+	Persistent<State> state;
 };
 
 
