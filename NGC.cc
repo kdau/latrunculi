@@ -46,9 +46,9 @@ translate (const String& _msgid, Side side)
 Team
 get_chess_team (Side side)
 {
-	if (side.value == QuestVar ("chess_side_good").get ())
+	if (side.value == QuestVar ("chess_side_good"))
 		return Team::GOOD;
-	else if (side.value == QuestVar ("chess_side_evil").get ())
+	else if (side.value == QuestVar ("chess_side_evil"))
 		return Team::BAD_1;
 	else
 		return Team::NEUTRAL;
@@ -60,9 +60,9 @@ get_chess_side (Team team)
 	switch (team)
 	{
 	case Team::GOOD:
-		return Side::Value (QuestVar ("chess_side_good").get ());
+		return Side::Value (int (QuestVar ("chess_side_good")));
 	case Team::BAD_1:
-		return Side::Value (QuestVar ("chess_side_evil").get ());
+		return Side::Value (int (QuestVar ("chess_side_evil")));
 	default:
 		return Side::NONE;
 	}
@@ -72,7 +72,7 @@ int
 get_facing_direction (Side side)
 {
 	return side.get_facing_direction () *
-		((QuestVar ("chess_side_good").get () == 0) ? 1 : -1);
+		((QuestVar ("chess_side_good") == 0) ? 1 : -1);
 }
 
 
@@ -85,15 +85,15 @@ ChessSet::ChessSet (int _number)
 
 ChessSet::ChessSet (Team team)
 	: number (QuestVar (team == Team::GOOD
-		? "chess_set_good" : "chess_set_evil").get ())
+		? "chess_set_good" : "chess_set_evil"))
 {}
 
 Team
 ChessSet::get_team () const
 {
-	if (QuestVar ("chess_set_good").get () == number)
+	if (QuestVar ("chess_set_good") == number)
 		return Team::GOOD;
-	else if (QuestVar ("chess_set_evil").get () == number)
+	else if (QuestVar ("chess_set_evil") == number)
 		return Team::BAD_1;
 	else
 		return Team::NEUTRAL;
@@ -101,7 +101,7 @@ ChessSet::get_team () const
 
 ChessSet::ChessSet (Side side)
 	: number (QuestVar (get_chess_team (side) == Team::GOOD
-		? "chess_set_good" : "chess_set_evil").get ())
+		? "chess_set_good" : "chess_set_evil"))
 {}
 
 Side
@@ -364,7 +364,7 @@ Message::Result
 NGCIntro::finish_briefing (ConversationMessage& message)
 {
 	if (message.conversation == host ())
-		Objective (0).set_state (Objective::State::COMPLETE);
+		Objective (0).state = Objective::State::COMPLETE;
 	return Message::CONTINUE;
 }
 
@@ -571,8 +571,7 @@ NGCClock::stop_the_clock (Message&)
 Time
 NGCClock::get_time_remaining () const
 {
-	return std::max (0l, long (Time (time_control)) -
-		QuestVar ("stat_time").get ());
+	return std::max (0l, long (Time (time_control)) - QuestVar ("stat_time"));
 }
 
 void

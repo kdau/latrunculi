@@ -157,10 +157,10 @@ NGCGame::start_game (Message&)
 	if (good_side == Side::NONE)
 		good_side = Side::Value (Thief::Engine::random_int
 			(Side::WHITE, Side::BLACK));
-	QuestVar ("chess_side_good").set (good_side->value);
+	QuestVar ("chess_side_good") = good_side->value;
 
 	evil_side = good_side->get_opponent ();
-	QuestVar ("chess_side_evil").set (evil_side->value);
+	QuestVar ("chess_side_evil") = evil_side->value;
 
 	Object good_mp ((good_side == Side::WHITE)
 		? "M-ChessWhite" : "M-ChessBlack");
@@ -328,7 +328,7 @@ NGCGame::update_record ()
 		record = _record.str ();
 
 		// Update "moves made" statistic.
-		QuestVar ("stat_moves").set (game->get_fullmove_number () - 1u);
+		QuestVar ("stat_moves") = game->get_fullmove_number () - 1u;
 	}
 }
 
@@ -428,7 +428,7 @@ NGCGame::tick_tock (TimerMessage& message)
 	if (state == State::NONE) return Message::HALT;
 
 	// Update time-played statistic.
-	QuestVar ("stat_time").set (message.get_time ());
+	QuestVar ("stat_time") = message.get_time ();
 
 	// Inform chess clocks.
 	for (auto& clock : ScriptParamsLink::get_all_by_data (host (), "Clock"))
@@ -685,7 +685,7 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 		// Increment the pieces-taken statistics.
 		QuestVar statistic ((move->get_side () == good_side)
 			? "stat_enemy_pieces" : "stat_own_pieces");
-		statistic.set (statistic.get () + 1);
+		statistic = statistic + 1;
 	}
 
 	// Set up a castling sequence, if applicable.
@@ -936,9 +936,9 @@ NGCGame::finish_endgame (Message& message)
 		return Message::ERROR;
 	}
 
-	objective.set_visible (true);
-	objective.set_state ((objective.number == 0)
-		? Objective::State::COMPLETE : Objective::State::FAILED);
+	objective.visible = true;
+	objective.state = (objective.number == 0)
+		? Objective::State::COMPLETE : Objective::State::FAILED;
 	return Message::HALT;
 }
 

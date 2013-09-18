@@ -488,7 +488,7 @@ NGCPiece::die (Message&)
 	subtitle.reset ();
 
 	// Ensure that any corpses will bury themselves appropriately.
-	QuestVar ("chess_corpse_team").set (int (Team (team)));
+	QuestVar ("chess_corpse_team") = int (Team (team));
 
 	// Set timer to do it on ourself, if we are not replaced.
 	start_timer ("StartBurial", Duration::DEATH, false);
@@ -500,7 +500,7 @@ Message::Result
 NGCPiece::start_burial (TimerMessage&)
 {
 	if (team == Team::NEUTRAL)
-		team = Team (QuestVar ("chess_corpse_team").get ());
+		team = Team (int (QuestVar ("chess_corpse_team")));
 
 	// Create a smoke puff at the site of death.
 	Object puff_archetype = Object ("ChessBurialPuff"),
