@@ -334,7 +334,7 @@ NGCPiece::start_attack (Message& message)
 		// The attack will begin upon arrival at the square.
 		return Message::HALT;
 
-	host_as<AI> ().set_minimum_alert (AI::Alert::HIGH);
+	host_as<AI> ().minimum_alert = AI::Alert::HIGH;
 
 	GenericMessage ("BeAttacked").send (host (), victim);
 	start_timer ("MaintainAttack", 1ul, false);
@@ -392,7 +392,7 @@ NGCPiece::finish_attack ()
 	for (auto& aware_link : AIAwarenessLink::get_all (host ()))
 		aware_link.destroy ();
 
-	self.set_minimum_alert (AI::Alert::NONE);
+	self.minimum_alert = AI::Alert::NONE;
 	self.clear_alertness ();
 
 	// Prevent some non-human AIs from continuing first alert barks.

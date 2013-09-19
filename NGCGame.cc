@@ -193,16 +193,6 @@ NGCGame::start_game (Message&)
 	if (proxy_origin != Object::NONE)
 		arrange_board (proxy_origin, true);
 
-	good_check.reset (new GameMessage (good_side, luminance_mult));
-	good_check->enabled = false;
-	good_check->position = HUDMessage::Position::NW;
-	good_check->set_text (Check (good_side).describe ());
-
-	evil_check.reset (new GameMessage (evil_side, luminance_mult));
-	evil_check->enabled = false;
-	evil_check->position = HUDMessage::Position::NE;
-	evil_check->set_text (Check (evil_side).describe ());
-
 	update_sim ();
 	start_timer ("TickTock", 1000ul, true);
 	start_timer ("CheckEngine", 250ul, true);
@@ -404,6 +394,7 @@ NGCGame::update_interface ()
 	if (!game) return;
 
 	// Update the squares interface (buttons and decals).
+
 	for (auto _square = Square::BEGIN; _square.is_valid (); ++_square)
 	{
 		Object square = get_square (_square);
@@ -419,6 +410,24 @@ NGCGame::update_interface ()
 				is_friendly ? NGCSquare::State::FRIENDLY_INERT :
 					NGCSquare::State::EMPTY,
 			piece).send (host (), square);
+	}
+
+	// Ensure that relevant HUD messages are ready for display.
+
+	if (!good_check)
+	{
+		good_check.reset (new GameMessage (good_side, luminance_mult));
+		good_check->enabled = false;
+		good_check->position = HUDMessage::Position::NW;
+		good_check->set_text (Check (good_side).describe ());
+	}
+
+	if (!evil_check)
+	{
+		evil_check.reset (new GameMessage (evil_side, luminance_mult));
+		evil_check->enabled = false;
+		evil_check->position = HUDMessage::Position::NE;
+		evil_check->set_text (Check (evil_side).describe ());
 	}
 }
 
@@ -658,8 +667,8 @@ NGCGame::start_move (const Move::Ptr& move, bool from_engine)
 
 	// Announce the move and clear any check indicator.
 	announce_event (*move);
-	good_check->enabled = false;
-	evil_check->enabled = false;
+	if (good_check) good_check->enabled = false;
+	if (evil_check) evil_check->enabled = false;
 
 	// Identify the moving piece and squares.
 	Object piece = get_piece_at (move->get_from ()),
@@ -886,8 +895,8 @@ NGCGame::start_endgame ()
 
 	update_sim ();
 	update_interface ();
-	good_check->enabled = false;
-	evil_check->enabled = false;
+	if (good_check) good_check->enabled = false;
+	if (evil_check) evil_check->enabled = false;
 
 	// Stop the clocks.
 	for (auto& clock : ScriptParamsLink::get_all_by_data (host (), "Clock"))
@@ -953,25 +962,24 @@ NGCGame::declare_war (Message&)
 	update_interface ();
 
 	// Enable across-the-board hostility.
+
 	bool rand = Thief::Engine::random_int (0, 1);
 	Object white_mp (rand ? "M-ChessAttacker" : "M-ChessVictim"),
 		black_mp (rand ? "M-ChessVictim" : "M-ChessAttacker"),
-		alive_mp ("M-ChessAlive");
+		alive_mp ("M-ChessAlive"), warrior_mp ("M-ChessWarrior");
+
 	for (auto square = Square::BEGIN; square.is_valid (); ++square)
 	{
 		AI combatant = get_piece_at (square);
 		if (combatant == Object::NONE) continue;
-		Side side = game->get_piece_at (square).side;
 
-		// Prepare for battle.
 		combatant.remove_metaprop (alive_mp);
+
+		Side side = game->get_piece_at (square).side;
 		combatant.add_metaprop ((side == Side::WHITE) ? white_mp
 			: (side == Side::BLACK) ? black_mp : alive_mp);
 
-		// Ensure that the enemy is noticed.
-		combatant.vision = AI::Rating::WELL_ABOVE;
-		combatant.hearing = AI::Rating::WELL_ABOVE;
-		combatant.investigates = true;
+		combatant.add_metaprop (warrior_mp);
 	}
 
 	// In case the visibility conditions are poor, attract attention.
@@ -1019,8 +1027,8 @@ NGCGame::check_war (TimerMessage&)
 				? white_alive : black_alive,
 			evil_alive = (evil_side == Side::WHITE)
 				? white_alive : black_alive;
-		good_check->enabled = good_alive < 3u;
-		evil_check->enabled = evil_alive < 3u;
+		if (good_check) good_check->enabled = good_alive < 3u;
+		if (evil_check) evil_check->enabled = evil_alive < 3u;
 		return Message::HALT;
 	}
 
@@ -1207,9 +1215,9 @@ NGCGame::script_failure (const String& where, const String& what)
 Message::Result
 NGCGame::end_mission (TimerMessage&)
 {
-	announcement.reset ();
-	good_check.reset ();
-	evil_check.reset ();
+	if (announcement) announcement->enabled = false;
+	if (good_check) good_check->enabled = false;
+	if (evil_check) evil_check->enabled = false;
 	Mission::end ();
 	return Message::HALT;
 }

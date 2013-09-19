@@ -462,13 +462,17 @@ NGCScenario::disable_step ()
 }
 
 Message::Result
-NGCScenario::enter_environment (Message&)
+NGCScenario::enter_environment (Message& message)
 {
 	if (state == State::NONE)
 		return Message::ERROR; // ???
 
 	if (state == State::BRIEFING)
 		return Message::HALT; // already done
+
+	// Prevent a bounding box trigger from re-triggering, since TrigOBB
+	// doesn't support the Once flag.
+	Physical (message.get_from ()).remove_physics ();
 
 	if (state == State::SELECTED)
 	{
@@ -982,19 +986,26 @@ NGCFireworks::NGCFireworks (const String& _name, const Object& _host)
 Message::Result
 NGCFireworks::on_trap (bool on, Message&)
 {
-	if (on)
-		for (int i = 0; i < count; ++i)
-			start_timer ("LaunchOne",
-				Engine::random_int (0, count * spread), false);
+	if (!on) return Message::HALT;
+
+	Object firework = ScriptParamsLink::get_one_by_data
+		(host (), "Firework").get_dest ();
+	if (firework == Object::NONE)
+		firework = Object ("firearr");
+
+	for (int i = 0; i < count; ++i)
+		start_timer ("LaunchOne", Engine::random_int (0, count * spread),
+			false, firework);
+
 	return Message::HALT;
 }
 
 Message::Result
-NGCFireworks::launch_one (TimerMessage&)
+NGCFireworks::launch_one (TimerMessage& message)
 {
-	Projectile::launch (Object ("firearr"), host (), 0.0f,
-		{ Engine::random_float (-20.0f, 20.0f),
-		  Engine::random_float (-20.0f, 20.0f), 40.0f });
+	Projectile::launch (message.get_data<Object> (Message::DATA1), host (),
+		0.0f, { Engine::random_float (-20.0f, 20.0f),
+			Engine::random_float (-20.0f, 20.0f), 40.0f });
 	return Message::HALT;
 }
 
