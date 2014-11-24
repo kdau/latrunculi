@@ -27,13 +27,11 @@
 namespace Chess {
 
 String
-translate (const String& _msgid, Side side)
+translate (const String& msgid, Side side)
 {
-	std::ostringstream msgid;
-	msgid << _msgid;
-	if (side.is_valid ())
-		msgid << ChessSet (side).number;
-	return Mission::get_text ("strings", "chess", msgid.str ());
+	return Mission::get_text ("strings", "chess", side.is_valid ()
+		? (msgid + std::to_string (ChessSet (side).number))
+		: msgid);
 
 }
 
@@ -113,9 +111,7 @@ ChessSet::get_side () const
 Object
 ChessSet::get_metaprop () const
 {
-	std::ostringstream name;
-	name << "M-ChessSet" << number;
-	return Object (name.str ());
+	return Object ("M-ChessSet" + std::to_string (number));
 }
 
 Color
@@ -163,10 +159,8 @@ HUDMessage::set_color (const Color& color, float luminance_mult)
 	_color_fg.L *= luminance_mult;
 	color_fg = _color_fg;
 
-	// The background is a near-black version of the original.
-	LabColor _color_bg (color);
-	_color_bg.L = 0.0;
-	color_bg = _color_bg;
+	// The background is black.
+	color_bg = Color (0x000000);
 
 	// The border is slightly darker than the foreground.
 	LabColor _color_border (_color_fg);
@@ -178,13 +172,13 @@ bool
 HUDMessage::prepare ()
 {
 	if (!enabled) return false;
+	CanvasRect elem_area;
 
 	// Get the canvas and text size and calculate the element size.
 	CanvasSize canvas = Engine::get_canvas_size (),
-		text_size = get_text_size (text),
-		elem_size;
-	elem_size.w = BORDER + PADDING + text_size.w + PADDING + BORDER;
-	elem_size.h = BORDER + PADDING + text_size.h + PADDING + BORDER;
+		text_size = get_text_size (text);
+	elem_area.w = BORDER + PADDING + text_size.w + PADDING + BORDER;
+	elem_area.h = BORDER + PADDING + text_size.h + PADDING + BORDER;
 
 	// Get the topic's position in canvas coordinates.
 	CanvasPoint topic_pos = CanvasPoint::OFFSCREEN;
@@ -197,35 +191,37 @@ HUDMessage::prepare ()
 	}
 
 	// Calculate the element position.
-	CanvasPoint elem_pos;
 	switch (position)
 	{
 	case Position::TOPIC:
 		if (topic_pos.valid ())
 		{
-			elem_pos = { topic_pos.x - elem_size.w / 2 + offset.x,
-				topic_pos.y + offset.y };
+			elem_area.x = topic_pos.x - elem_area.w / 2 + offset.x;
+			elem_area.y = topic_pos.y + offset.y;
 			break;
 		}
 	case Position::CENTER:
-		elem_pos = { (canvas.w - elem_size.w) / 2 + offset.x,
-			canvas.h / 2 + offset.y };
+		elem_area.x = (canvas.w - elem_area.w) / 2 + offset.x;
+		elem_area.y = canvas.h / 2 + offset.y;
 		break;
 	case Position::NW:
-		elem_pos = offset;
+		elem_area.x = offset.x;
+		elem_area.y = offset.y;
 		break;
 	case Position::NORTH:
-		elem_pos = { (canvas.w - elem_size.w) / 2 + offset.x, offset.y };
+		elem_area.x = (canvas.w - elem_area.w) / 2 + offset.x;
+		elem_area.y = offset.y;
 		break;
 	case Position::NE:
-		elem_pos = { canvas.w - elem_size.w - offset.x, offset.y };
+		elem_area.x = canvas.w - elem_area.w - offset.x;
+		elem_area.y = offset.y;
 		break;
 	}
-	elem_pos.x = std::max (0, std::min (canvas.w - elem_size.w, elem_pos.x));
-	elem_pos.y = std::max (0, std::min (canvas.h - elem_size.h, elem_pos.y));
+	elem_area.x = std::max (0, std::min (canvas.w - elem_area.w, elem_area.x));
+	elem_area.y = std::max (0, std::min (canvas.h - elem_area.h, elem_area.y));
 
-	set_position (elem_pos);
-	set_size (elem_size);
+	set_position (elem_area);
+	set_size (elem_area);
 	return true;
 }
 
@@ -391,10 +387,8 @@ NGCScenario::initialize ()
 	NGCTitled::initialize ();
 	if (title)
 	{
-		std::ostringstream msgid;
-		msgid << "title_" << mission;
 		title->set_text (Mission::get_text ("strings", "titles",
-			msgid.str ()));
+			"title_" + std::to_string (mission)));
 		title->set_color (ChessSet (chess_set).get_color ());
 	}
 }
@@ -434,12 +428,12 @@ NGCScenario::disable (Message&)
 	// Disable the gem itself.
 	host ().add_metaprop (Object ("FrobInert"));
 	host_as<AmbientHacked> ().active = false;
-	host_as<AnimLight> ().set_light_mode (AnimLight::Mode::SMOOTH_DIM);
+	host_as<AnimLight> ().light_mode = AnimLight::Mode::SMOOTH_DIM;
 
 	// Turn off the fill lighting (on the wall object).
 	AnimLight wall = ScriptParamsLink::get_one_by_data
 		(host (), "Wall").get_dest ();
-	wall.set_light_mode (AnimLight::Mode::SMOOTH_DIM);
+	wall.light_mode = AnimLight::Mode::SMOOTH_DIM;
 
 	// Fade out the gem and darken the preview image.
 	disable_trans.start ();
@@ -612,6 +606,8 @@ NGCFlag::NGCFlag (const String& _name, const Object& _host)
 Message::Result
 NGCFlag::ask_question (FrobMessage&)
 {
+	if (!title) return Message::ERROR;
+
 	SoundSchema ("bow_begin").play_ambient ();
 
 	orig_loc = host ().get_location ();
@@ -621,12 +617,9 @@ NGCFlag::ask_question (FrobMessage&)
 	player.add_to_inventory (host ());
 	player.select_item (host ());
 
-	if (title)
-	{
-		title->enabled = true;
-		title->set_text (Chess::translate (question));
-		title->offset = { 0, 64 };
-	}
+	title->enabled = true;
+	title->set_text (Chess::translate (question));
+	title->offset = { 0, 64 };
 
 	return Message::HALT;
 }
@@ -634,7 +627,8 @@ NGCFlag::ask_question (FrobMessage&)
 Message::Result
 NGCFlag::intercept_deselect (Message&)
 {
-	if (title && Player ().is_in_inventory (host ()))
+	if (!title) return Message::ERROR;
+	if (Player ().is_in_inventory (host ()))
 		title->enabled = true;
 	return Message::HALT;
 }
@@ -642,17 +636,22 @@ NGCFlag::intercept_deselect (Message&)
 Message::Result
 NGCFlag::answered_yes (FrobMessage&)
 {
-	SoundSchema ("pickup_gem").play_ambient ();
-	GenericMessage (message_name->data ()).broadcast
-		(host (), "ControlDevice");
-	end_question ();
+	if (!title) return Message::ERROR;
+	if (title->enabled)
+	{
+		SoundSchema ("pickup_gem").play_ambient ();
+		GenericMessage (message_name->data ()).broadcast
+			(host (), "ControlDevice");
+		end_question ();
+	}
 	return Message::HALT;
 }
 
 Message::Result
 NGCFlag::answered_no (ContainmentMessage& message)
 {
-	if (message.event == ContainmentMessage::REMOVE)
+	if (!title) return Message::ERROR;
+	if (title->enabled && message.event == ContainmentMessage::REMOVE)
 	{
 		SoundSchema ("bow_abort").play_ambient ();
 		end_question ();
@@ -669,6 +668,7 @@ NGCFlag::end_question ()
 		title->set_text (Chess::translate (title_msgid));
 		title->offset = HUDMessage::DEFAULT_OFFSET;
 	}
+
 	Player player;
 	player.remove_from_inventory (host ());
 	drop_loc = player.object_to_world ({ 4.0f, 0.0f, 2.0f });
@@ -878,9 +878,9 @@ NGCSquare::update_button ()
 	if (button != Object::NONE)
 		button.destroy ();
 
-	std::ostringstream archetype_name;
-	archetype_name << "ChessButton" << ChessSet (side).number;
-	button = Object::start_create (Object (archetype_name.str ()));
+	Object archetype ("ChessButton" +
+		std::to_string (ChessSet (side).number));
+	button = Object::start_create (archetype);
 	if (button == Object::NONE)
 	{
 		log (Log::ERROR, "Could not create a button.");

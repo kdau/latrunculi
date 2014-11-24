@@ -77,6 +77,9 @@ private:
 
 	AIAwarenessLink create_awareness (const Object& target, Time);
 
+	Message::Result start_war (Message&);
+	Message::Result finish_war (Message&);
+
 	// Death and burial
 
 	Message::Result force_death (TimerMessage&);

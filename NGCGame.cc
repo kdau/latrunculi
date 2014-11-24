@@ -260,14 +260,20 @@ Object
 NGCGame::create_piece (const Object& square, const Piece& _piece,
 	bool start_positioned, bool proxy)
 {
-	std::ostringstream archetype_name;
+	String archetype_name;
 	if (proxy)
-		archetype_name << "ChessProxy" << _piece.get_code ();
+	{
+		archetype_name = "ChessProxy";
+		archetype_name += _piece.get_code ();
+	}
 	else
-		archetype_name << "ChessPiece" << _piece.get_code ()
-			<< ChessSet (_piece.side).number;
+	{
+		archetype_name = "ChessPiece";
+		archetype_name += _piece.get_code ();
+		archetype_name += std::to_string (ChessSet (_piece.side).number);
+	}
 
-	Object archetype (archetype_name.str ());
+	Object archetype (archetype_name);
 	if (archetype == Object::NONE)
 		return Object::NONE;
 
@@ -510,7 +516,9 @@ NGCGame::prepare_engine (bool resume_computing)
 			("script_module_path", "engine.ose");
 		if (engine_path.empty ())
 			throw std::runtime_error ("could not find chess engine");
-		engine.reset (new Chess::Engine (engine_path));
+		engine.reset (new Chess::Engine (engine_path,
+			Thief::QuestVar ("debug_engine").get
+				(Chess::Engine::DEBUG_DEFAULT)));
 
 		String openings_path = Thief::Engine::find_file_in_path
 			("script_module_path", "openings.bin");
@@ -519,7 +527,8 @@ NGCGame::prepare_engine (bool resume_computing)
 		else
 			engine->clear_openings_book ();
 
-		engine->set_difficulty (Mission::get_difficulty ());
+		engine->set_difficulty
+			(float (Mission::get_difficulty ()) / 2.0f);
 		engine->start_game (game.get ());
 
 		if (resume_computing)
@@ -631,6 +640,7 @@ NGCGame::engine_failure (const String& where, const String& what)
 	}
 
 	update_interface ();
+	stop_the_clocks ();
 }
 
 Message::Result
@@ -895,12 +905,9 @@ NGCGame::start_endgame ()
 
 	update_sim ();
 	update_interface ();
+	stop_the_clocks ();
 	if (good_check) good_check->enabled = false;
 	if (evil_check) evil_check->enabled = false;
-
-	// Stop the clocks.
-	for (auto& clock : ScriptParamsLink::get_all_by_data (host (), "Clock"))
-		GenericMessage ("StopTheClock").send (host (), clock.get_dest ());
 
 	// Have the heralds announce the result.
 	if (game->get_last_event ())
@@ -960,32 +967,29 @@ NGCGame::declare_war (Message&)
 	if (!game) return Message::ERROR;
 	state = State::MOVING;
 	update_interface ();
+	stop_the_clocks ();
 
 	// Enable across-the-board hostility.
 
 	bool rand = Thief::Engine::random_int (0, 1);
 	Object white_mp (rand ? "M-ChessAttacker" : "M-ChessVictim"),
-		black_mp (rand ? "M-ChessVictim" : "M-ChessAttacker"),
-		alive_mp ("M-ChessAlive"), warrior_mp ("M-ChessWarrior");
+		black_mp (rand ? "M-ChessVictim" : "M-ChessAttacker");
 
 	for (auto square = Square::BEGIN; square.is_valid (); ++square)
 	{
-		AI combatant = get_piece_at (square);
-		if (combatant == Object::NONE) continue;
-
-		combatant.remove_metaprop (alive_mp);
-
+		Object combatant = get_piece_at (square);
 		Side side = game->get_piece_at (square).side;
-		combatant.add_metaprop ((side == Side::WHITE) ? white_mp
-			: (side == Side::BLACK) ? black_mp : alive_mp);
-
-		combatant.add_metaprop (warrior_mp);
+		if (combatant != Object::NONE)
+			GenericMessage::with_data ("StartWar",
+				(side == Side::WHITE) ? white_mp : black_mp)
+				.send (host (), combatant);
 	}
 
-	// In case the visibility conditions are poor, attract attention.
+	// In case the visibility conditions are poor, attract attention to
+	// the center of the board.
 	SoundSchema ("flashbomb_exp").play (host ());
 
-	// Start periodic checks for the winning side.
+	// Start periodic checks for the result.
 	start_timer ("CheckWar", 250ul, true);
 
 	return Message::HALT;
@@ -1021,8 +1025,8 @@ NGCGame::check_war (TimerMessage&)
 		game->record_war_result (Side::BLACK);
 	else if (black_alive == 0u)
 		game->record_war_result (Side::WHITE);
-	else // The war is ongoing.
-	{
+	else // The war is ongoing. Declare a side in "check" if less than three
+	{    // of its pieces are left.
 		size_t good_alive = (good_side == Side::WHITE)
 				? white_alive : black_alive,
 			evil_alive = (evil_side == Side::WHITE)
@@ -1035,15 +1039,9 @@ NGCGame::check_war (TimerMessage&)
 	// Stand down the survivors.
 	for (auto square = Square::BEGIN; square.is_valid (); ++square)
 	{
-		AI combatant = get_piece_at (square);
-		if (combatant == Object::NONE) continue;
-
-		combatant.remove_metaprop (Object ("M-ChessAttacker"));
-		combatant.remove_metaprop (Object ("M-ChessVictim"));
-		combatant.add_metaprop (Object ("M-ChessAlive"));
-		combatant.investigates = false;
-		combatant.clear_alertness ();
-		combatant.send_signal ("FaceEnemy");
+		Damageable combatant = get_piece_at (square);
+		if (combatant != Object::NONE && combatant.hit_points > 0)
+			GenericMessage ("FinishWar").send (host (), combatant);
 	}
 
 	start_endgame ();
@@ -1119,7 +1117,7 @@ NGCGame::herald_concept (Side side, const String& concept, Time delay)
 				(host (), "Herald"))
 	{
 		Object herald = _herald.get_dest ();
-		Time my_delay = delay + Thief::Engine::random_int (0, 50);
+		Time my_delay = delay + Time (Thief::Engine::random_int (0, 50));
 		if (side == Side::NONE || side ==
 		    Parameter<Side> (herald, "chess_side", { Side::NONE }))
 			GenericMessage::with_data ("HeraldConcept", concept)
@@ -1198,11 +1196,20 @@ NGCGame::show_logbook (Message& message)
 }
 
 void
+NGCGame::stop_the_clocks ()
+{
+	for (auto& clock : ScriptParamsLink::get_all_by_data (host (), "Clock"))
+		GenericMessage ("StopTheClock").send (host (), clock.get_dest ());
+}
+
+void
 NGCGame::script_failure (const String& where, const String& what)
 {
 	log (Log::ERROR, "Script failure in %||: %||.", where, what);
 
 	game.reset ();
+	engine.reset ();
+	stop_the_clocks ();
 	state = State::NONE;
 
 	// Inform the player that we are about to die.

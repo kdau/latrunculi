@@ -67,6 +67,9 @@ NGCPiece::NGCPiece (const String& _name, const Object& _host)
 	listen_message ("BecomeVictim", &NGCPiece::become_victim);
 	listen_message ("BeAttacked", &NGCPiece::be_attacked);
 
+	listen_message ("StartWar", &NGCPiece::start_war);
+	listen_message ("FinishWar", &NGCPiece::finish_war);
+
 	listen_timer ("ForceDeath", &NGCPiece::force_death);
 	listen_message ("AIModeChange", &NGCPiece::check_ai_mode);
 	listen_message ("Slain", &NGCPiece::die);
@@ -334,8 +337,6 @@ NGCPiece::start_attack (Message& message)
 		// The attack will begin upon arrival at the square.
 		return Message::HALT;
 
-	host_as<AI> ().minimum_alert = AI::Alert::HIGH;
-
 	GenericMessage ("BeAttacked").send (host (), victim);
 	start_timer ("MaintainAttack", 1ul, false);
 
@@ -392,7 +393,6 @@ NGCPiece::finish_attack ()
 	for (auto& aware_link : AIAwarenessLink::get_all (host ()))
 		aware_link.destroy ();
 
-	self.minimum_alert = AI::Alert::NONE;
 	self.clear_alertness ();
 
 	// Prevent some non-human AIs from continuing first alert barks.
@@ -446,6 +446,9 @@ NGCPiece::create_awareness (const Object& target, Time time)
 	if (aware.exists ())
 	{
 		aware.seen = true;
+		aware.can_raycast = true;
+		aware.have_los = true;
+		aware.firsthand = true;
 		aware.update_level (AIAwarenessLink::Level::HIGH, time);
 		aware.update_contact (target.get_location (), time, true);
 		aware.update (time, true);
@@ -457,6 +460,31 @@ NGCPiece::create_awareness (const Object& target, Time time)
 			AIAwarenessLink::HAVE_LOS | AIAwarenessLink::FIRSTHAND,
 			AIAwarenessLink::Level::HIGH, time,
 			target.get_location (), 0);
+}
+
+Message::Result
+NGCPiece::start_war (Message& message)
+{
+	auto self = host_as<AI> ();
+	self.remove_metaprop (Object ("M-ChessAlive"));
+	self.add_metaprop (message.get_data<Object> (Message::DATA1));
+	self.add_metaprop (Object ("M-ChessWarrior"));
+	attacker = self; // to allow die method to proceed
+	return Message::HALT;
+}
+
+Message::Result
+NGCPiece::finish_war (Message&)
+{
+	auto self = host_as<AI> ();
+	self.remove_metaprop (Object ("M-ChessWarrior"));
+	self.remove_metaprop (Object ("M-ChessAttacker"));
+	self.remove_metaprop (Object ("M-ChessVictim"));
+	self.add_metaprop (Object ("M-ChessAlive"));
+	self.clear_alertness ();
+	self.halt_speech ();
+	self.send_signal ("FaceEnemy");
+	return Message::HALT;
 }
 
 
@@ -572,9 +600,8 @@ NGCPiece::start_promotion (Message& message)
 		GenericMessage::with_data ("Reposition", square, true).send
 			(host (), host ());
 
-	std::ostringstream effect_name;
-	effect_name << "ChessPromotion" << set;
-	Object effect = Object::create (Object (effect_name.str ()));
+	Object effect_archetype ("ChessPromotion" + std::to_string (set));
+	Object effect = Object::create (effect_archetype);
 	if (effect != Object::NONE)
 	{
 		// Don't ParticleAttach, so that the FX can outlive us.

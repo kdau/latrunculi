@@ -122,6 +122,8 @@ private:
 
 	Message::Result show_logbook (Message&);
 
+	void stop_the_clocks ();
+
 	void script_failure (const String& where, const String& what);
 	Message::Result end_mission (TimerMessage&);
 
