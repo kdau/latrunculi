@@ -1,7 +1,7 @@
 /******************************************************************************
  *  NGCPiece.cc
  *
- *  Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
+ *  Copyright (C) 2013-2014 Kevin Daughtridge <kevin@kdau.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -35,21 +35,22 @@ namespace Duration
 
 NGCPiece::NGCPiece (const String& _name, const Object& _host)
 	: Script (_name, _host),
-	  PARAMETER_ (team, "chess_team", Team::NEUTRAL),
-	  PARAMETER_ (set, "chess_set", 0),
-	  PERSISTENT (game, Object::NONE),
-	  PARAMETER (max_opacity, 1.0f),
-	  PERSISTENT (fade_state, Fade::NONE),
+	  THIEF_PARAMETER_FULL (team, "chess_team", Team::NEUTRAL),
+	  THIEF_PARAMETER_FULL (set, "chess_set", 0),
+	  THIEF_PERSISTENT_FULL (game, Object::NONE),
+	  THIEF_PARAMETER (max_opacity, 1.0f),
+	  THIEF_PERSISTENT_FULL (fade_state, Fade::NONE),
 	  fade_trans (*this, &NGCPiece::fade_step, "Fade", 50ul, 1000ul,
 		Curve::LINEAR, "fade_time", "fade_curve"),
-	  PERSISTENT_ (reposition_start), PERSISTENT_ (reposition_end),
+	  THIEF_PERSISTENT (reposition_start),
+	  THIEF_PERSISTENT (reposition_end),
 	  reposition_trans (*this, &NGCPiece::reposition_step, "Reposition",
 	  	10ul, 500ul, Curve::LOG_10, "slide_time", "slide_curve"),
-	  PERSISTENT (target_square, Object::NONE),
-	  PERSISTENT (victim, Object::NONE),
-	  PERSISTENT (attacker, Object::NONE),
-	  PARAMETER_ (is_corpse, "chess_corpse", false),
-	  PERSISTENT (promotion, Object::NONE)
+	  THIEF_PERSISTENT_FULL (target_square, Object::NONE),
+	  THIEF_PERSISTENT_FULL (victim, Object::NONE),
+	  THIEF_PERSISTENT_FULL (attacker, Object::NONE),
+	  THIEF_PARAMETER_FULL (is_corpse, "chess_corpse", false),
+	  THIEF_PERSISTENT_FULL (promotion, Object::NONE)
 {
 	listen_message ("Select", &NGCPiece::select);
 	listen_message ("Deselect", &NGCPiece::deselect);
@@ -694,7 +695,7 @@ NGCPiece::subtitle_speech (PropertyMessage& message)
 	// Get or calculate the schema duration.
 	Time duration = ScriptHost (schema).script_timing.exists ()
 		? ScriptHost (schema).script_timing
-		: Mission::calc_text_duration (text, 700ul);
+		: Interface::calc_text_duration (text, 700ul);
 
 	// Start the subtitle and schedule its end.
 	subtitle.reset (new HUDMessage ());

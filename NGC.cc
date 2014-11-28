@@ -1,7 +1,7 @@
 /******************************************************************************
  *  NGC.cc
  *
- *  Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
+ *  Copyright (C) 2013-2014 Kevin Daughtridge <kevin@kdau.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ namespace Chess {
 String
 translate (const String& msgid, Side side)
 {
-	return Mission::get_text ("strings", "chess", side.is_valid ()
+	return Interface::get_text ("strings", "chess", side.is_valid ()
 		? (msgid + std::to_string (ChessSet (side).number))
 		: msgid);
 
@@ -250,7 +250,7 @@ HUDMessage::redraw ()
 NGCTitled::NGCTitled (const String& _name, const Object& _host,
 		const CIString& _title_msgid)
 	: Script (_name, _host),
-	  PARAMETER_ (title_msgid, _title_msgid, "")
+	  THIEF_PARAMETER_FULL (title_msgid, _title_msgid, "")
 {
 	listen_message ("WorldSelect", &NGCTitled::on_world_select);
 	listen_message ("WorldDeSelect", &NGCTitled::on_world_deselect);
@@ -372,9 +372,9 @@ NGCScenario::NGCScenario (const String& _name, const Object& _host)
 	: NGCTitled (_name, _host),
 	  disable_trans (*this, &NGCScenario::disable_step, "Disable", 50ul,
 		1000ul, Curve::LINEAR, "fade_time", "fade_curve"),
-	  PARAMETER (mission, 0),
-	  PARAMETER (chess_set, 0),
-	  PERSISTENT (state, State::NONE)
+	  THIEF_PARAMETER (mission, 0),
+	  THIEF_PARAMETER (chess_set, 0),
+	  THIEF_PERSISTENT_FULL (state, State::NONE)
 {
 	listen_message ("FrobWorldEnd", &NGCScenario::select);
 	listen_message ("Disable", &NGCScenario::disable);
@@ -387,7 +387,7 @@ NGCScenario::initialize ()
 	NGCTitled::initialize ();
 	if (title)
 	{
-		title->set_text (Mission::get_text ("strings", "titles",
+		title->set_text (Interface::get_text ("strings", "titles",
 			"title_" + std::to_string (mission)));
 		title->set_color (ChessSet (chess_set).get_color ());
 	}
@@ -503,11 +503,11 @@ NGCScenario::enter_environment (Message& message)
 
 NGCClock::NGCClock (const String& _name, const Object& _host)
 	: NGCTitled (_name, _host),
-	  PARAMETER_ (time_control, "clock_time", 0ul),
-	  PERSISTENT (running, false),
-	  PARAMETER_ (joint, "clock_joint", 0),
-	  PARAMETER_ (joint_low, "clock_low", 0.0f),
-	  PARAMETER_ (joint_high, "clock_high", 0.0f)
+	  THIEF_PARAMETER_FULL (time_control, "clock_time", 0ul),
+	  THIEF_PERSISTENT_FULL (running, false),
+	  THIEF_PARAMETER_FULL (joint, "clock_joint", 0),
+	  THIEF_PARAMETER_FULL (joint_low, "clock_low", 0.0f),
+	  THIEF_PARAMETER_FULL (joint_high, "clock_high", 0.0f)
 {
 	listen_message ("TickTock", &NGCClock::tick_tock);
 	listen_message ("StopTheClock", &NGCClock::stop_the_clock);
@@ -589,12 +589,12 @@ NGCClock::update_display ()
 
 NGCFlag::NGCFlag (const String& _name, const Object& _host)
 	: NGCTitled (_name, _host),
-	  PARAMETER (question, String ()),
-	  PARAMETER_ (message_name, "message", "TurnOn"),
-	  PERSISTENT (orig_loc, Vector ()),
-	  PERSISTENT (orig_rot, Vector ()),
-	  PERSISTENT (drop_loc, Vector ()),
-	  PERSISTENT (drop_rot, Vector ()),
+	  THIEF_PARAMETER (question, String ()),
+	  THIEF_PARAMETER_FULL (message_name, "message", "TurnOn"),
+	  THIEF_PERSISTENT_FULL (orig_loc, Vector ()),
+	  THIEF_PERSISTENT_FULL (orig_rot, Vector ()),
+	  THIEF_PERSISTENT_FULL (drop_loc, Vector ()),
+	  THIEF_PERSISTENT_FULL (drop_rot, Vector ()),
 	  boomerang (*this, &NGCFlag::boomerang_step, "Boomerang", 20ul, 320ul)
 {
 	listen_message ("FrobWorldEnd", &NGCFlag::ask_question);
@@ -693,14 +693,14 @@ NGCFlag::boomerang_step ()
 
 NGCSquare::NGCSquare (const String& _name, const Object& _host)
 	: Script (_name, _host),
-	  PERSISTENT (state, State::EMPTY),
-	  PERSISTENT (piece, Piece ()),
-	  PARAMETER (is_proxy, false),
+	  THIEF_PERSISTENT_FULL (state, State::EMPTY),
+	  THIEF_PERSISTENT_FULL (piece, Piece ()),
+	  THIEF_PARAMETER (is_proxy, false),
 	  decal_fade (*this, &NGCSquare::decal_fade_step, "DecalFade"),
-	  PARAMETER (decal_offset, Vector ()),
-	  PARAMETER (luminance_mult, 1.0f),
+	  THIEF_PARAMETER (decal_offset, Vector ()),
+	  THIEF_PARAMETER (luminance_mult, 1.0f),
 	  button_fade (*this, &NGCSquare::button_fade_step, "ButtonFade"),
-	  PARAMETER (button_offset, Vector ())
+	  THIEF_PARAMETER (button_offset, Vector ())
 {
 	listen_message ("UpdateState", &NGCSquare::update_state);
 	listen_message ("Select", &NGCSquare::select);
@@ -977,8 +977,8 @@ NGCSquare::on_turn_on (Message&)
 
 NGCFireworks::NGCFireworks (const String& _name, const Object& _host)
 	: TrapTrigger (_name, _host),
-	  PARAMETER_ (count, "firework_count", 12),
-	  PARAMETER_ (spread, "firework_spread", 300)
+	  THIEF_PARAMETER_FULL (count, "firework_count", 12),
+	  THIEF_PARAMETER_FULL (spread, "firework_spread", 300)
 {
 	listen_timer ("LaunchOne", &NGCFireworks::launch_one);
 }

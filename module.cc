@@ -18,22 +18,22 @@
  *
  *****************************************************************************/
 
+#include <Thief/Thief.hh>
+#include "version.rc"
+
 #include "NGC.hh"
 #include "NGCGame.hh"
 #include "NGCPiece.hh"
 
-#include "version.rc"
-#include <Thief/module.hh>
-
-THIEF_MODULE_BEGIN (MODULE_NAME)
-	THIEF_SCRIPT ("NGCClock", "NGCTitled", NGCClock)
-	THIEF_SCRIPT ("NGCFireworks", "Script", NGCFireworks)
-	THIEF_SCRIPT ("NGCFlag", "NGCTitled", NGCFlag)
-	THIEF_SCRIPT ("NGCGame", "Script", NGCGame)
-	THIEF_SCRIPT ("NGCIntro", "Script", NGCIntro)
-	THIEF_SCRIPT ("NGCPiece", "Script", NGCPiece)
-	THIEF_SCRIPT ("NGCScenario", "NGCTitled", NGCScenario)
-	THIEF_SCRIPT ("NGCSquare", "Script", NGCSquare)
-	THIEF_SCRIPT ("NGCTitled", "Script", NGCTitled)
-THIEF_MODULE_END
+THIEF_MODULE (MODULE_NAME,
+	THIEF_SCRIPT ("NGCClock", "NGCTitled", NGCClock),
+	THIEF_SCRIPT ("NGCFireworks", "Script", NGCFireworks),
+	THIEF_SCRIPT ("NGCFlag", "NGCTitled", NGCFlag),
+	THIEF_SCRIPT ("NGCGame", "Script", NGCGame),
+	THIEF_SCRIPT ("NGCIntro", "Script", NGCIntro),
+	THIEF_SCRIPT ("NGCPiece", "Script", NGCPiece),
+	THIEF_SCRIPT ("NGCScenario", "NGCTitled", NGCScenario),
+	THIEF_SCRIPT ("NGCSquare", "Script", NGCSquare),
+	THIEF_SCRIPT ("NGCTitled", "Script", NGCTitled),
+)
 

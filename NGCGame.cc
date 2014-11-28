@@ -1,7 +1,7 @@
 /******************************************************************************
  *  NGCGame.cc
  *
- *  Copyright (C) 2013 Kevin Daughtridge <kevin@kdau.com>
+ *  Copyright (C) 2013-2014 Kevin Daughtridge <kevin@kdau.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -43,11 +43,11 @@ GameMessage::GameMessage (Side side, float luminance_mult)
 
 NGCGame::NGCGame (const String& _name, const Object& _host)
 	: Script (_name, _host),
-	  PERSISTENT_ (record),
-	  PERSISTENT (good_side, Side::NONE),
-	  PERSISTENT (evil_side, Side::NONE),
-	  PERSISTENT (state, State::NONE),
-	  PARAMETER (luminance_mult, 1.0f)
+	  THIEF_PERSISTENT (record),
+	  THIEF_PERSISTENT_FULL (good_side, Side::NONE),
+	  THIEF_PERSISTENT_FULL (evil_side, Side::NONE),
+	  THIEF_PERSISTENT_FULL (state, State::NONE),
+	  THIEF_PARAMETER (luminance_mult, 1.0f)
 {
 	listen_message ("PostSim", &NGCGame::start_game);
 
@@ -625,7 +625,7 @@ NGCGame::engine_failure (const String& where, const String& what)
 		state = State::INTERACTIVE;
 
 	// Inform the player that both sides will be interactive.
-	Mission::show_book ("engine-problem", "parch");
+	Interface::show_book ("engine-problem", "parch");
 
 	// Eliminate objects associated with the computer opponent.
 	for (auto& fence : ScriptParamsLink::get_all_by_data
@@ -1065,7 +1065,7 @@ NGCGame::announce_event (const Event& event)
 		announcement->identifier = identifier;
 		announcement->set_text (description);
 		start_timer ("EndAnnouncement", std::max (5000ul,
-			Mission::calc_text_duration (description, 1000ul).value),
+			Interface::calc_text_duration (description, 1000ul).value),
 			false, identifier);
 	}
 
@@ -1185,13 +1185,13 @@ NGCGame::show_logbook (Message& message)
 	catch (std::exception& e)
 	{
 		log (Log::WARNING, "Failed to prepare logbook: %||.", e.what ());
-		Mission::show_text (Chess::translate ("logbook_problem"));
+		Interface::show_text (Chess::translate ("logbook_problem"));
 		return Message::ERROR;
 	}
 
 	if (!readable.book_art.exists ())
 		readable.book_art = "pbook";
-	Mission::show_book ("logbook", readable.book_art, true);
+	Interface::show_book ("logbook", readable.book_art, true);
 	return Message::HALT;
 }
 
@@ -1213,7 +1213,7 @@ NGCGame::script_failure (const String& where, const String& what)
 	state = State::NONE;
 
 	// Inform the player that we are about to die.
-	Mission::show_book ("script-problem", "parch");
+	Interface::show_book ("script-problem", "parch");
 
 	Mission::fade_to_black (100ul);
 	start_timer ("EndMission", 100ul, false);
